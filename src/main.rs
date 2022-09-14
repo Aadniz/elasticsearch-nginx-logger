@@ -1,5 +1,8 @@
-use std::env;
+use std::{env, thread};
+use std::io::{empty, stdout, Write};
 use std::path::Path;
+use std::time::Duration;
+use thread::sleep;
 
 pub mod server; use server::Server;
 
@@ -17,7 +20,8 @@ fn main() {
     // Possible default locations
     // First priority from top to bottom
     let mut locations : Vec<&str> = vec![
-        "/var/log/nginx/access.log"
+        "/var/log/nginx/access.log",
+        "/mnt/incognito/log/nginx/access.log"
     ];
 
     // Iterate arguments, skip executable
@@ -42,12 +46,36 @@ fn main() {
     servers.extend(new_servers);
     servers.reverse();
 
-    println!("Servers:");
-    for server in servers{
-        println!("{}", server);
+
+    // Choosing a file path
+    let mut location : String = String::from("");
+    println!("Checking file location (✓: chosen, -: skip, X: Not found): ");
+    for loc in &locations {
+        print!("[ ] {} ...", loc);
+        stdout().flush().unwrap();
+        if !location.is_empty() && Path::new(loc).exists() {
+            print!("\r[-]\n");
+        }else if Path::new(loc).exists() {
+            print!("\r[✓]\n");
+            location = String::from(*loc);
+        }else{
+            print!("\r[X]\n");
+        }
     }
-    println!("Locations:");
-    for location in locations{
-        println!("{}", location);
+
+    // Choosing a server
+    let mut server : String = String::from("");
+    println!("Checking file location (✓: chosen, -: skip, X: Not found): ");
+    for ser in &server {
+        print!("[ ] {} ...", ser);
+        stdout().flush().unwrap();
+        if !server.is_empty() && Path::new(ser).exists() {
+            print!("\r[-]\n");
+        }else if Path::new(ser).exists() {
+            print!("\r[✓]\n");
+            server = String::from(*ser);
+        }else{
+            print!("\r[X]\n");
+        }
     }
 }
