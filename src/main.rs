@@ -5,6 +5,7 @@ use std::time::Duration;
 use thread::sleep;
 
 pub mod server; use server::Server;
+use crate::server::is_url;
 
 
 fn main() {
@@ -64,16 +65,16 @@ fn main() {
     }
 
     // Choosing a server
-    let mut server : String = String::from("");
+    let mut server : Option<Server> = None;
     println!("Checking file location (✓: chosen, -: skip, X: Not found): ");
-    for ser in &server {
+    for ser in servers {
         print!("[ ] {} ...", ser);
         stdout().flush().unwrap();
-        if !server.is_empty() && Path::new(ser).exists() {
+        if server.is_some(){
             print!("\r[-]\n");
-        }else if Path::new(ser).exists() {
+        }else if is_url(ser.get_hostname()) {
             print!("\r[✓]\n");
-            server = String::from(*ser);
+            server = Some(ser.clone());
         }else{
             print!("\r[X]\n");
         }

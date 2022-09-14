@@ -6,6 +6,9 @@ pub fn is_url(str : &str) -> bool{
     return re.is_match(str);
 }
 
+impl strings for String {}
+impl strings for &str {}
+
 // This structure is what they call a "class"
 pub struct Server{
     protocol : String,
@@ -14,9 +17,9 @@ pub struct Server{
     db : String
 }
 impl Server{
-    pub fn new(str : &str) -> Self {
+    pub fn new<T>(str : T) -> Self {
         let re = Regex::new(r#"(http|https)://([^/ :]+):?([^/ ]*)/?(/?[^ #?]*)\x3f?([^ #]*)#?([^ ]*)"#).unwrap();
-        let cap = re.captures(str).expect("Expected valid url");
+        let cap = re.captures(str.as_str()).expect("Expected valid url");
 
         Server {
             protocol: String::from(&cap[1]),
@@ -25,9 +28,20 @@ impl Server{
             db: String::from(&cap[4])
         }
     }
+
+    pub fn get_hostname(self : Server) -> String {
+        format!("{}://{}:{}/{}", self.protocol, self.hostname, self.port, self.db)
+    }
 }
 impl fmt::Display for Server{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}://{}:{}/{}", self.protocol, self.hostname, self.port, self.db)
+        write!(f, "{}", self.get_hostname())
+    }
+}
+impl Clone for Server{
+    fn clone(&self) -> Server {
+        let url = self.get_hostname();
+        let server : Server = Server::new(url);
+        server
     }
 }
