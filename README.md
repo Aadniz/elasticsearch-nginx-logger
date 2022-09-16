@@ -88,6 +88,15 @@ The default mapping for elasticsearch is this:
           }
         }
       },
+      "refer": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          }
+        }
+      },
       "status-code": {
         "type": "short"
       },
