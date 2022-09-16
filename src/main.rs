@@ -1,14 +1,13 @@
-use std::{env, thread};
-use std::io::{empty, stdout, Write};
+use std::{env};
+use std::io::{stdout, Write};
 use std::path::Path;
-use std::time::Duration;
-use thread::sleep;
+use colored::Colorize;
 
 pub mod server; use server::Server;
-use crate::server::is_url;
+use crate::server::*;
 
-
-fn main() {
+#[tokio::main]
+async fn main() {
     let args: Vec<String> = env::args().collect();
 
     // Possible default servers
@@ -32,7 +31,7 @@ fn main() {
         if Path::new(arg).exists() {
             new_locations.push(arg);
         }
-        else if server::is_url(arg){
+        else if server::is_url(String::from(arg)){
             new_servers.push(Server::new(arg));
         }
     }
@@ -50,33 +49,45 @@ fn main() {
 
     // Choosing a file path
     let mut location : String = String::from("");
-    println!("Checking file location (✓: chosen, -: skip, X: Not found): ");
+    println!("Checking file location ({}: {}, {}: {}, {}: {}): ", "✓".green(), "chosen".green(), "-".yellow(), "skip".yellow(), "X".red(), "Not found".red());
     for loc in &locations {
         print!("[ ] {} ...", loc);
         stdout().flush().unwrap();
         if !location.is_empty() && Path::new(loc).exists() {
-            print!("\r[-]\n");
+            print!("{}", "\r[-]\n".yellow());
         }else if Path::new(loc).exists() {
-            print!("\r[✓]\n");
+            print!("{}", "\r[✓]\n".green());
             location = String::from(*loc);
         }else{
-            print!("\r[X]\n");
+            print!("{}", "\r[X]\n".red());
         }
     }
+    if location.is_empty() {
+        println!("{}", "No log file found to log data from".red());
+        std::process::exit(1);
+    }
+    println!();
 
     // Choosing a server
     let mut server : Option<Server> = None;
-    println!("Checking file location (✓: chosen, -: skip, X: Not found): ");
+    println!("Checking Servers ({}: {}, {}: {}, {}: {}): ", "✓".green(), "chosen".green(), "-".yellow(), "skip".yellow(), "X".red(), "Failed".red());
     for ser in servers {
         print!("[ ] {} ...", ser);
         stdout().flush().unwrap();
         if server.is_some(){
-            print!("\r[-]\n");
-        }else if is_url(ser.get_hostname()) {
-            print!("\r[✓]\n");
+            print!("{}", " (Not bothering checking)".yellow());
+            print!("{}", "\r[-]\n".yellow());
+        }else if db_exists(ser.clone()).await {
+            print!("{}", "\r[✓]\n".green());
             server = Some(ser.clone());
         }else{
-            print!("\r[X]\n");
+            print!("{}", "\r[X]\n".red());
         }
+    }
+    println!();
+
+    if server.is_some() == false{
+        println!("{}", "No server found to log data to".red());
+        std::process::exit(1);
     }
 }
