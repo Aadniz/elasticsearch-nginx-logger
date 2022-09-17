@@ -1,10 +1,14 @@
-use std::fmt;
+use std::{fmt, io};
+use std::io::Write;
 use std::time::Duration;
 use regex::Regex;
 use reqwest;
 use reqwest::Client;
 use serde_json::{Result, Value};
 use colored::Colorize;
+
+use crate::logger::Logger;
+
 
 /// Checks if the string is an URL with regex
 pub fn is_url(str1 : String) -> bool{
@@ -56,7 +60,7 @@ pub async fn is_es(ser : Server) -> bool{
 /// Checks if Elasticsearch database exists
 pub async fn db_exists(ser : Server) -> bool {
     if ser.db == "" {
-        print!("{}", " (No db set?)".red());
+        print!("{}", " (No db specified)".red());
         return false;
     }
     if is_es(ser.clone()).await == false {
@@ -68,8 +72,30 @@ pub async fn db_exists(ser : Server) -> bool {
         .build()
         .unwrap();
     let response = client.get(url.as_str()).send().await;
-    if response.unwrap().status() != reqwest::StatusCode::OK {
-        print!("{} {}{}", " (No db called".red(), ser.db.as_str().red(), ")".red());
+    let res = response.unwrap();
+    if res.status() != reqwest::StatusCode::OK {
+        println!();
+        println!("  Found elasticsearch database, but DB ({}) does not exist.", ser.db);
+        println!("  Do you want to create {} at {}://{}:{} ?", ser.db, ser.protocol, ser.hostname, ser.port);
+        print!("({}/{}/{}) > ", "y".green(), "n".red(), "q".yellow());
+        let _ = io::stdout().flush();
+        let mut user_input = String::new();
+        let stdin = io::stdin();
+        stdin.read_line(&mut user_input).expect("Expect input");
+        user_input = String::from(user_input.trim());
+        if user_input != "y" && user_input != "q" { // if n or something else
+            return false;
+        } else if user_input == "q" {
+            println!("Quitting...");
+            std::process::exit(0);
+        } else if user_input == "y" {
+            Logger::create_mapping(ser);
+            return true;
+        }
+        return false;
+    }
+    if Logger::valid_mapping(ser.db.clone(), res).await == false {
+        print!("{}", " (Elasticsearch was found, but it has the incorrect mapping)".yellow());
         return false;
     }
     true
@@ -88,7 +114,7 @@ pub async fn is_up(str1 : String) -> bool{
     if response.is_ok() {
         return true;
     }
-    print!("{}", " (No connection to device)".red());
+    print!("{}", " (Port not open, or device is down)".red());
     false
 }
 
@@ -114,6 +140,9 @@ impl Server{
 
     pub fn get_url(&self) -> String {
         format!("{}://{}:{}/{}", self.protocol, self.hostname, self.port, self.db)
+    }
+    pub fn get_host(&self) -> String {
+        format!("{}://{}:{}", self.protocol, self.hostname, self.port)
     }
 }
 impl fmt::Display for Server{

@@ -3,7 +3,11 @@ use std::io::{stdout, Write};
 use std::path::Path;
 use colored::Colorize;
 
-pub mod server; use server::Server;
+// headers
+pub mod server;
+mod logger;
+
+use server::Server;
 use crate::server::*;
 
 #[tokio::main]
@@ -90,4 +94,5 @@ async fn main() {
         println!("{}", "No server found to log data to".red());
         std::process::exit(1);
     }
+
 }
