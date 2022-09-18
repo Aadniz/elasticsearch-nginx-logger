@@ -169,9 +169,19 @@ impl Server{
     pub async fn bulk(&self, log : Vec<Logger>) {
         let mut body: Vec<JsonBody<Value>> = vec![];
 
+        let mut ids : Vec<String> = vec![];
         for elm in log {
-            body.push(json!({"index": {"_id": elm.get_id()}}).into());
-            body.push(json!(elm).into());
+            let id = elm.get_id();
+            if !ids.contains(&id) {
+                body.push(json!({"index": {"_id": id}}).into());
+                body.push(json!(elm).into());
+                ids.push(id);
+            }
+        }
+
+        if body.is_empty() {
+            println!("{}", "body is empty?".red());
+            return;
         }
 
         let _response = self.client
@@ -219,7 +229,7 @@ impl Server{
             println!("{}", "0 documents was indexed!".red());
             return;
         }
-        println!("{}", format!("Successfully indexed {} documents", counter).green());
+        println!("Successfully indexed {} documents", counter);
     }
 }
 impl fmt::Display for Server{
