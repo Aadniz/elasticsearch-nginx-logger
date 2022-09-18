@@ -2,7 +2,7 @@
 
 An application to actively monitor access.log and bulk them to elasticsearch
 
-![screenshot](./screenshots/Screenshot_2022-09-16_03:33:48.png "Checking process")
+![screenshot](./screenshots/Screenshot_2022-09-18_09:12:55.png "Checking process")
 
 ### Basic usage
 ```bash
@@ -76,7 +76,7 @@ The default mapping for elasticsearch is this:
       "ip": {
         "type": "ip"
       },
-      "alt-ip": {
+      "alt_ip": {
         "type": "ip"
       },
       "request": {
@@ -97,13 +97,13 @@ The default mapping for elasticsearch is this:
           }
         }
       },
-      "status-code": {
+      "status_code": {
         "type": "short"
       },
       "size": {
         "type": "integer"
       },
-      "user-agent": {
+      "user_agent": {
         "type": "text",
         "fields": {
           "keyword": {
@@ -120,6 +120,25 @@ The default mapping for elasticsearch is this:
   }
 }
 ```
+
+### Nginx structure
+
+*I wish to change this to a more dynamic approach in the future!*
+
+The default structure rust-logger looks for is something like this:
+
+```
+174.85.87.104, 127.0.0.1 - - [17/Sep/2022:18:07:59 +0200] "GET /browse/1/0/Date HTTP/1.1" 200 10981 "-" "Prowlarr/0.4.4.1947 (freebsd 13.1-release-p2)"
+248.217.138.209 - - [17/Sep/2022:18:07:59 +0200] "POST /s/?search/Charmed/8/99/0 HTTP/1.1" 200 13137 "https://google.com/?q=charmed" "Mozilla/5.0 (Linux; Android 12; SM-P615) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36"
+242.100.253.127, 127.0.0.1 - - [17/Sep/2022:18:07:59 +0200] "GET /index.php HTTP/1.1" 200 7535 "https://yandex.ru/?q=test" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:104.0) Gecko/20100101 Firefox/104.0"
+```
+* **ip addresses:** The seperated ip addresses are the `ip` and `alt_ip`. `alt_ip` can be `None`
+* **Date:** Next in the log, there is the time
+* **Request:** The GET/POST/PUT request including its path
+* **Status code:** Status code, 200, 404, 403 etc...
+* **Bytes:** Size of the response
+* **Refer:** Refer URL
+* **User agent:** Lastly, it's the user agent
 
 ## NOTES
 

@@ -2,16 +2,23 @@ use std::{env};
 use std::io::{stdout, Write};
 use std::path::Path;
 use colored::Colorize;
+use logwatcher::{LogWatcher, LogWatcherAction};
 
 // headers
 pub mod server;
 mod logger;
 
 use server::Server;
+use crate::logger::{Logger, valid_log};
 use crate::server::*;
 
 #[tokio::main]
 async fn main() {
+
+    #[allow(non_snake_case)]
+    // Default values
+    let BULK_SIZE = 500;
+
     let args: Vec<String> = env::args().collect();
 
     // Possible default servers
@@ -59,7 +66,7 @@ async fn main() {
         stdout().flush().unwrap();
         if !location.is_empty() && Path::new(loc).exists() {
             print!("{}", "\r[-]\n".yellow());
-        }else if Path::new(loc).exists() {
+        }else if valid_log(loc) {
             print!("{}", "\r[✓]\n".green());
             location = String::from(*loc);
         }else{
@@ -73,26 +80,56 @@ async fn main() {
     println!();
 
     // Choosing a server
-    let mut server : Option<Server> = None;
+    let mut _server : Option<Server> = None;
     println!("Checking Servers ({}: {}, {}: {}, {}: {}): ", "✓".green(), "chosen".green(), "-".yellow(), "skip".yellow(), "X".red(), "Failed".red());
     for ser in servers {
         print!("[ ] {} ...", ser);
         stdout().flush().unwrap();
-        if server.is_some(){
+        if _server.is_some(){
             print!("{}", " (Not bothering checking)".yellow());
             print!("{}", "\r[-]\n".yellow());
         }else if db_exists(ser.clone()).await {
             print!("{}", "\r[✓]\n".green());
-            server = Some(ser.clone());
+            _server = Some(ser.clone());
         }else{
             print!("{}", "\r[X]\n".red());
         }
     }
     println!();
 
-    if server.is_some() == false{
+    if _server.is_some() == false{
         println!("{}", "No server found to log data to".red());
         std::process::exit(1);
     }
 
+    let server = _server.unwrap();
+
+
+    // And then for the actual logging
+    let mut log_watcher = LogWatcher::register(location).unwrap();
+    let mut counter = 0;
+    let mut log : Vec<Logger> = vec![];
+
+    log_watcher.watch(&mut move |line: String| {
+        let logger : Option<Logger> = Logger::new(line.clone());
+        if logger.is_none() {
+            println!("Failed? {}", line);
+            return LogWatcherAction::None;
+        }
+
+        log.push(logger.unwrap());
+        counter += 1;
+
+        // Send the bulk
+        if counter >= BULK_SIZE {
+            futures::executor::block_on(async {
+                server.bulk(log.clone()).await;
+            });
+
+            counter = 0;
+            log.clear();
+        }
+
+        LogWatcherAction::None
+    });
 }
