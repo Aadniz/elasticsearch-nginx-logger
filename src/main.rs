@@ -31,8 +31,8 @@ async fn main() {
     // Possible default locations
     // First priority from top to bottom
     let mut locations : Vec<&str> = vec![
-        "/var/log/nginx/access.log",
-        "/mnt/incognito/log/nginx/access.log"
+        "/tmp/test.log",
+        "/var/log/nginx/access.log"
     ];
 
     // Iterate arguments, skip executable
@@ -122,9 +122,7 @@ async fn main() {
 
         // Send the bulk
         if counter >= BULK_SIZE {
-            futures::executor::block_on(async {
-                server.bulk(log.clone()).await;
-            });
+            server.bulk(&log);
 
             counter = 0;
             log.clear();
