@@ -1,5 +1,4 @@
 use std::{fmt, io};
-use std::fs::OpenOptions;
 use std::io::{Write};
 use std::time::Duration;
 use regex::Regex;
@@ -7,7 +6,9 @@ use reqwest;
 use reqwest::Client;
 use serde_json::{json, Result, Value};
 use colored::Colorize;
-use serde_json::Value::Null;
+use elasticsearch::{BulkParts, Elasticsearch};
+use elasticsearch::http::request::JsonBody;
+use elasticsearch::http::transport::Transport;
 
 use crate::logger::Logger;
 
@@ -160,68 +161,50 @@ impl Server{
         format!("{}://{}:{}", self.protocol, self.hostname, self.port)
     }
 
-    pub fn bulk(&self, log : &Vec<Logger>) {
-        let mut body: Vec<String> = vec![];
+    pub async fn bulk(&self, log : &Vec<Logger>) {
+        let mut body: Vec<JsonBody<Value>> = vec![];
+
+        let transport = Transport::single_node(format!("{}://{}:{}", self.protocol, self.hostname, self.port).as_str());
+        let client = Elasticsearch::new(transport.unwrap());
 
         let mut ids : Vec<String> = vec![];
         for elm in log {
             let id = elm.get_id();
             if !ids.contains(&id) {
-                body.push((json!({"index": {"_index": self.db, "_type": "_doc","_id": id}})).to_string());
-                body.push((json!(elm)).to_string());
+                body.push(json!({"index": {"_id": id}}).into());
+                body.push(json!(elm).into());
                 ids.push(id);
             }
         }
-
-        // Debugging
-        println!("writing log...");
-        futures::executor::block_on(async {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .append(true)
-                .open("/tmp/test1.log")
-                .unwrap();
-
-            if let Err(e) = writeln!(file, "{}", body.join("\n")) {
-                eprintln!("Couldn't write to file: {}", e);
-            }
-        });
-        //
 
         if body.is_empty() {
             println!("{}", "body is empty?".red());
             return;
         }
 
-        println!("Async block starts now ↓");
-        let mut response_body : Value = Null;
-        futures::executor::block_on(async {
+        let _response = client
+            .bulk(BulkParts::Index(self.db.as_str()))
+            .body(body)
+            .send()
+            .await;
 
-            let _response = reqwest::Client::new()
-                .post(format!("{}://{}:{}/_bulk", self.protocol, self.hostname, self.port))
-                .header("Content-Type", "application/json")
-                .body(body.join("\n") + "\n")
-                .timeout(Duration::from_secs(30))
-                .send()
-                .await;
+        if !_response.is_ok(){
+            println!("{}", "Failed to create bulk".red());
+            return;
+        }
 
-            if !_response.is_ok(){
-                println!("#{}", "Failed to create bulk".red());
-                return;
-            }
+        let response = _response
+            .unwrap()
+            .json::<Value>()
+            .await;
 
-            let response = _response
-                .unwrap()
-                .json::<Value>()
-                .await;
+        if !response.is_ok() {
+            println!("{}", "Responded with a non-ok message!".red());
+            return;
+        }
 
-            if !response.is_ok() {
-                println!("{}", "Responded with a non-ok message!".red());
-                return;
-            }
+        let response_body = response.unwrap();
 
-            response_body = response.unwrap();
-        });
 
         let successful = response_body["errors"].as_bool().unwrap_or(false) == false;
         if !successful {

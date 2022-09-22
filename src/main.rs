@@ -12,8 +12,8 @@ use server::Server;
 use crate::logger::{Logger, valid_log};
 use crate::server::*;
 
-#[tokio::main]
-async fn main() {
+
+fn main() {
 
     #[allow(non_snake_case)]
     // Default values
@@ -82,20 +82,26 @@ async fn main() {
     // Choosing a server
     let mut _server : Option<Server> = None;
     println!("Checking Servers ({}: {}, {}: {}, {}: {}): ", "✓".green(), "chosen".green(), "-".yellow(), "skip".yellow(), "X".red(), "Failed".red());
-    for ser in servers {
-        print!("[ ] {} ...", ser);
-        stdout().flush().unwrap();
-        if _server.is_some(){
-            print!("{}", " (Not bothering checking)".yellow());
-            print!("{}", "\r[-]\n".yellow());
-        }else if db_exists(ser.clone()).await {
-            print!("{}", "\r[✓]\n".green());
-            _server = Some(ser.clone());
-        }else{
-            print!("{}", "\r[X]\n".red());
-        }
-    }
-    println!();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            for ser in servers {
+                print!("[ ] {} ...", ser);
+                stdout().flush().unwrap();
+                if _server.is_some() {
+                    print!("{}", " (Not bothering checking)".yellow());
+                    print!("{}", "\r[-]\n".yellow());
+                } else if db_exists(ser.clone()).await {
+                    print!("{}", "\r[✓]\n".green());
+                    _server = Some(ser.clone());
+                } else {
+                    print!("{}", "\r[X]\n".red());
+                }
+            }
+            println!();
+        });
 
     if _server.is_some() == false{
         println!("{}", "No server found to log data to".red());
@@ -122,7 +128,13 @@ async fn main() {
 
         // Send the bulk
         if counter >= BULK_SIZE {
-            server.bulk(&log);
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    server.bulk(&log).await;
+                });
 
             counter = 0;
             log.clear();
