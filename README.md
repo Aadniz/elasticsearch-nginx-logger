@@ -79,6 +79,15 @@ The default mapping for elasticsearch is this:
       "alt_ip": {
         "type": "ip"
       },
+      "host": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          }
+        }
+      },
       "request": {
         "type": "text",
         "fields": {
@@ -127,14 +136,25 @@ The default mapping for elasticsearch is this:
 
 The default structure rust-logger looks for is something like this:
 
+**nginx.conf**
 ```
-174.85.87.104, 127.0.0.1 - - [17/Sep/2022:18:07:59 +0200] "GET /browse/1/0/Date HTTP/1.1" 200 10981 "-" "Prowlarr/0.4.4.1947 (freebsd 13.1-release-p2)"
-248.217.138.209 - - [17/Sep/2022:18:07:59 +0200] "POST /s/?search/Charmed/8/99/0 HTTP/1.1" 200 13137 "https://google.com/?q=charmed" "Mozilla/5.0 (Linux; Android 12; SM-P615) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36"
-242.100.253.127, 127.0.0.1 - - [17/Sep/2022:18:07:59 +0200] "GET /index.php HTTP/1.1" 200 7535 "https://yandex.ru/?q=test" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:104.0) Gecko/20100101 Firefox/104.0"
+log_format combined_realip '$http_x_forwarded_for - $remote_user [$time_local] '
+                           '"$host" "$request" $status $body_bytes_sent '
+                           '"$http_referer" "$http_user_agent"';
+
+access_log /var/log/nginx/access.log combined_realip;
+```
+
+**access.log**
+```
+174.85.87.104, 127.0.0.1 - - [17/Sep/2022:18:07:59 +0200] "domain.org" "GET /browse/1/0/Date HTTP/1.1" 200 10981 "-" "Prowlarr/0.4.4.1947 (freebsd 13.1-release-p2)"
+248.217.138.209 - - [17/Sep/2022:18:07:59 +0200] "domain.org" "POST /s/?search/Charmed/8/99/0 HTTP/1.1" 200 13137 "https://google.com/?q=charmed" "Mozilla/5.0 (Linux; Android 12; SM-P615) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36"
+242.100.253.127, 127.0.0.1 - - [17/Sep/2022:18:07:59 +0200] "domain.org" "GET /index.php HTTP/1.1" 200 7535 "https://yandex.ru/?q=test" "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:104.0) Gecko/20100101 Firefox/104.0"
 ```
 * **ip addresses:** The seperated ip addresses are the `ip` and `alt_ip`. `alt_ip` can be `None`
 * **Date:** Next in the log, there is the time
 * **Request:** The GET/POST/PUT request including its path
+* **Host:** The sender's destination host
 * **Status code:** Status code, 200, 404, 403 etc...
 * **Bytes:** Size of the response
 * **Refer:** Refer URL

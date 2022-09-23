@@ -31,6 +31,7 @@ struct Mappings{
 struct Properties{
     ip: Ip,
     alt_ip: Ip,
+    host: Text,
     request: Text,
     refer: Text,
     status_code: Short,
@@ -80,6 +81,15 @@ impl Mapping{
                     },
                     alt_ip: Ip {
                         r#type: "ip".to_string()
+                    },
+                    host: Text {
+                        r#type: "text".to_string(),
+                        fields: TextFields {
+                            keyword: Keyword {
+                                r#type: "keyword".to_string(),
+                                ignore_above: 256
+                            }
+                        }
                     },
                     request: Text {
                         r#type: "text".to_string(),
@@ -212,6 +222,7 @@ pub fn valid_log(loc : &str) -> bool {
 pub struct Logger{
     ip : String,
     alt_ip : Option<String>,
+    host: Option<String>,
     request : String,
     refer : Option<String>,
     status_code : u16,
@@ -221,13 +232,13 @@ pub struct Logger{
 }
 impl Logger{
     pub fn new(line : String) -> Option<Self> {
-        let re = Regex::new(r#"(.*) .* .* \[(.*)\] "(.*)" (\d+) (\d+) "(.*)" "(.*)""#).ok()?;
+        let re = Regex::new(r#"(.*) .* .* \[(.*)\] "(.*)" "(.*)" (\d+) (\d+) "(.*)" "(.*)""#).ok()?;
         if re.is_match(line.as_str()) == false {
             return None;
         }
 
-        // 127.0.0.1, 84.213.100.23 - - [20/Jul/2022:22:12:47 +0200] "GET /index.html HTTP/1.1" 403    153    "https://google.com/q=test" "Mozilla/5.0 (X11; Linux x86_64; rv:102.0) Gecko/20100101 Firefox/102.0"
-        // cap[1]                        cap[2]                       cap[3]                    cap[4] cap[5]  cap[6]                      cap[7]
+        // 127.0.0.1, 84.213.100.23 - - [20/Jul/2022:22:12:47 +0200] "***REMOVED***.ru" "GET /index.html HTTP/1.1" 403    153    "https://google.com/q=test" "Mozilla/5.0 (X11; Linux x86_64; rv:102.0) Gecko/20100101 Firefox/102.0"
+        // cap[1]                        cap[2]                       cap[3]      cap[4]                    cap[5] cap[6]  cap[7]                      cap[8]
         let cap = re.captures(line.as_str())?;
 
         // Getting ip(s)
@@ -244,6 +255,9 @@ impl Logger{
             println!("Not an ip :P");
             return None;
         }
+        if !alt_ip.is_none() && !alt_ip.as_ref().unwrap().parse::<Ipv4Addr>().is_ok() && !alt_ip.as_ref().unwrap().parse::<Ipv6Addr>().is_ok(){
+            alt_ip = None;
+        }
 
         // Getting the date
         let time = date_to_epoch(&cap[2]);
@@ -251,28 +265,35 @@ impl Logger{
             return None;
         }
 
-        let request = &cap[3];
-        let status_code_res = &cap[4].parse::<u16>();
+        // Getting the domain
+        let mut host : Option<String> = None;
+        if &cap[3] != "-" {
+            host = Some(String::from(&cap[3]));
+        }
+
+        let request = &cap[4];
+        let status_code_res = &cap[5].parse::<u16>();
         if !status_code_res.is_ok() {
             return None;
         }
         let status_code = status_code_res.clone().unwrap();
-        let size_res = &cap[5].parse::<u32>();
+        let size_res = &cap[6].parse::<u32>();
         if !size_res.is_ok() {
             return None;
         }
         let size = size_res.clone().unwrap();
         let mut refer : Option<String> = None;
-        if &cap[6] != "-" {
-            refer = Some(String::from(&cap[6]));
+        if &cap[7] != "-" {
+            refer = Some(String::from(&cap[7]));
         }
         let mut user_agent : Option<String> = None;
-        if &cap[7] != "-" {
-            user_agent = Some(String::from(&cap[7]));
+        if &cap[8] != "-" {
+            user_agent = Some(String::from(&cap[8]));
         }
 
         Some(Logger {
             ip: String::from(ip),
+            host,
             alt_ip,
             request: String::from(request),
             refer,
@@ -289,6 +310,7 @@ impl Logger{
         Logger {
             ip: "127.0.0.1".to_string(),
             alt_ip: None,
+            host: None,
             request: "".to_string(),
             refer: None,
             status_code: 200,
@@ -312,11 +334,13 @@ impl Logger{
             .as_object()
             .unwrap()
             .clone();
+
         for elm in keys.iter() {
             if keys2.contains_key(elm.0) == false {
                 panic!("{} Does not exist in struct", elm.0)
             }
         }
+
         for elm in keys2.iter() {
             if keys.contains_key(elm.0) == false {
                 panic!("{} Does not exist in mapping", elm.0)
@@ -338,8 +362,7 @@ impl Logger{
         }
         let keys = j[db]["mappings"]["properties"]
             .as_object()
-            .unwrap()
-            .keys();
+            .unwrap();
         let mapping : Mapping = Mapping::new();
         let keys2 = serde_json::to_value(mapping.mappings.properties)
             .unwrap()
@@ -347,9 +370,15 @@ impl Logger{
             .unwrap()
             .clone();
 
-        for elm in keys {
+        for elm in keys.keys() {
             if keys2.contains_key(elm) == false{
                 print!(" Should not contain: {}", elm);
+                return false;
+            }
+        }
+        for elm in keys2.keys() {
+            if keys.contains_key(elm) == false{
+                print!(" DB does not contain: {}", elm);
                 return false;
             }
         }
@@ -396,21 +425,32 @@ impl Clone for Logger{
         }else{
             alt_ip = Option::from(self.alt_ip.as_ref().unwrap().clone())
         }
+
+        let host : Option<String>;
+        if self.alt_ip.is_none() {
+            host = None;
+        }else{
+            host = Option::from(self.host.as_ref().unwrap().clone())
+        }
+
         let refer : Option<String>;
         if self.refer.is_none() {
             refer = None;
         }else{
             refer = Option::from(self.refer.as_ref().unwrap().clone())
         }
+
         let user_agent : Option<String>;
         if self.user_agent.is_none() {
             user_agent = None;
         }else{
             user_agent = Option::from(self.user_agent.as_ref().unwrap().clone())
         }
+
         Logger {
             ip: self.ip.clone(),
             alt_ip,
+            host,
             request: self.request.clone(),
             refer,
             status_code: self.status_code.clone(),

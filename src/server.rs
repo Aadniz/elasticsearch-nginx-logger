@@ -185,6 +185,7 @@ impl Server{
         let _response = client
             .bulk(BulkParts::Index(self.db.as_str()))
             .body(body)
+            .request_timeout(Duration::from_secs(25))
             .send()
             .await;
 
