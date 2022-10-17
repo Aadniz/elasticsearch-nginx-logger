@@ -6,7 +6,7 @@ use reqwest;
 use reqwest::Client;
 use serde_json::{json, Result, Value};
 use colored::Colorize;
-use elasticsearch::{BulkParts, Elasticsearch};
+use elasticsearch::{BulkParts, Elasticsearch, CountParts};
 use elasticsearch::http::request::JsonBody;
 use elasticsearch::http::transport::Transport;
 
@@ -161,6 +161,64 @@ impl Server{
         format!("{}://{}:{}", self.protocol, self.hostname, self.port)
     }
 
+    pub async fn count_before(&self, epoch: i64) -> i64{
+
+        let transport = Transport::single_node(format!("{}://{}:{}", self.protocol, self.hostname, self.port).as_str());
+        let client = Elasticsearch::new(transport.unwrap());
+        let search_response = client
+        .count(CountParts::Index(&[self.db.as_str()]))
+        .body(json!({
+            "query": {
+	        	"bool": {
+	        		"must": [
+	        			{
+	        				"range": {
+	        					"time": {
+	        						"lt": epoch
+	        					}
+	        				}
+	        			}
+	        		]
+	        	}
+	        }
+        }))
+        .send()
+        .await;
+
+        if !search_response.is_ok() {
+            println!("{}", "Failed to send count request".red());
+            return -1;
+        }
+
+        let response = search_response
+            .unwrap()
+            .json::<Value>()
+            .await;
+
+        if !response.is_ok() {
+            println!("{}", "Responded with a non-ok message!".red());
+            return -1;
+        }
+
+        let response_body = response.unwrap();
+        if response_body.get("count").is_none() {
+            println!("{}", "\"count\" not in body response!".red());
+            return -1;
+        }
+
+        return response_body.get("count").unwrap().as_i64().unwrap();
+    }
+
+    pub fn archive(&self, epoch : i64) {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                // some async thingy
+            });
+    }
+
     pub async fn bulk(&self, log : &Vec<Logger>) {
         let mut body: Vec<JsonBody<Value>> = vec![];
 
@@ -251,3 +309,5 @@ impl Clone for Server{
         server
     }
 }
+
+

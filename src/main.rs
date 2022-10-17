@@ -1,6 +1,7 @@
-use std::{env};
+use std::{env, thread, sync::Arc, sync::Mutex};
 use std::io::{stdout, Write};
 use std::path::Path;
+use chrono::{Local, NaiveTime};
 use colored::Colorize;
 use logwatcher::{LogWatcher, LogWatcherAction};
 
@@ -12,12 +13,20 @@ use server::Server;
 use crate::logger::{Logger, valid_log};
 use crate::server::*;
 
+fn epoch_days_ago(days : i64) -> i64{
+    let time = Local::now() + chrono::Duration::days(-days);
+    let epoch = time.date().and_time(NaiveTime::from_num_seconds_from_midnight(0,0)).unwrap().timestamp();
+    return epoch;
+}
+
 
 fn main() {
 
     #[allow(non_snake_case)]
     // Default values
     let BULK_SIZE = 500;
+    //let ARCHIVE_TIME = 30; // Days
+    let ARCHIVE_TIME = 23; // Days
 
     let args: Vec<String> = env::args().collect();
 
@@ -115,6 +124,10 @@ fn main() {
     let mut log_watcher = LogWatcher::register(location).unwrap();
     let mut counter = 0;
     let mut log : Vec<Logger> = vec![];
+    let run = Arc::new(Mutex::new(false));
+
+    // Get time epoch since midnight 30 days ago 
+    let mut epoch = epoch_days_ago(ARCHIVE_TIME);
 
     log_watcher.watch(&mut move |line: String| {
         let logger : Option<Logger> = Logger::new(line.clone());
@@ -126,13 +139,41 @@ fn main() {
         log.push(logger.unwrap());
         counter += 1;
 
-        // Send the bulk
         if counter >= BULK_SIZE {
+            // Check if new day and archiving is not happening
+            let run1 = Arc::clone(&run);
+            let mut running = run1.lock().unwrap();
+            if epoch == epoch_days_ago(ARCHIVE_TIME) && *running == false {
+                epoch = epoch_days_ago(ARCHIVE_TIME);
+                *running = true;
+                let mut count = 0;
+                println!("Checking ARCHIVE_TIME");
+                tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(async {
+                        count = server.count_before(epoch).await;
+                    });
+                if count > 0 {
+                    println!("Documents to archive: {}", count);
+
+                    // Setting up variables to be sent to thread
+                    let server2 = server.clone();
+                    let run2 = Arc::clone(&run);
+                    thread::spawn(move || {
+                        server2.archive(epoch);
+                        let mut running = run2.lock().unwrap();
+                        *running = false;
+                    });
+                }
+            }
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
                 .unwrap()
                 .block_on(async {
+                    // Send the bulk
                     server.bulk(&log).await;
                 });
 
