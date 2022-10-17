@@ -26,7 +26,7 @@ fn main() {
     // Default values
     let BULK_SIZE = 500;
     //let ARCHIVE_TIME = 30; // Days
-    let ARCHIVE_TIME = 23; // Days
+    let ARCHIVE_TIME = 24; // Days
 
     let args: Vec<String> = env::args().collect();
 
@@ -143,7 +143,7 @@ fn main() {
             // Check if new day and archiving is not happening
             let run1 = Arc::clone(&run);
             let mut running = run1.lock().unwrap();
-            if epoch == epoch_days_ago(ARCHIVE_TIME) && *running == false {
+            if epoch != epoch_days_ago(ARCHIVE_TIME) && *running == false {
                 epoch = epoch_days_ago(ARCHIVE_TIME);
                 *running = true;
                 let mut count = 0;
@@ -155,6 +155,7 @@ fn main() {
                     .block_on(async {
                         count = server.count_before(epoch).await;
                     });
+
                 if count > 0 {
                     println!("Documents to archive: {}", count);
 
@@ -168,6 +169,10 @@ fn main() {
                     });
                 }
             }
+            //else {
+            //    println!("Already running, can't do this now");
+            //}
+
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()

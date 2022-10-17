@@ -1,4 +1,4 @@
-use std::{fmt, io};
+use std::{fmt, io, time, thread};
 use std::io::{Write};
 use std::time::Duration;
 use regex::Regex;
@@ -6,7 +6,7 @@ use reqwest;
 use reqwest::Client;
 use serde_json::{json, Result, Value};
 use colored::Colorize;
-use elasticsearch::{BulkParts, Elasticsearch, CountParts};
+use elasticsearch::{BulkParts, Elasticsearch, CountParts, SearchParts};
 use elasticsearch::http::request::JsonBody;
 use elasticsearch::http::transport::Transport;
 
@@ -134,7 +134,8 @@ pub struct Server{
     protocol : String,
     hostname : String,
     port : u16,
-    db : String
+    db : String,
+    client: Elasticsearch
 }
 impl Server{
     pub fn new(str : &str) -> Self {
@@ -146,11 +147,15 @@ impl Server{
         let port = cap[3].parse::<u16>().unwrap_or(9200);
         let db = String::from(&cap[4]);
 
+        let transport = Transport::single_node(format!("{}://{}:{}", protocol, hostname, port).as_str());
+        let client = Elasticsearch::new(transport.unwrap());
+
         Server {
             protocol,
             hostname,
             port,
-            db
+            db,
+            client
         }
     }
 
@@ -162,10 +167,7 @@ impl Server{
     }
 
     pub async fn count_before(&self, epoch: i64) -> i64{
-
-        let transport = Transport::single_node(format!("{}://{}:{}", self.protocol, self.hostname, self.port).as_str());
-        let client = Elasticsearch::new(transport.unwrap());
-        let search_response = client
+        let search_response = self.client
         .count(CountParts::Index(&[self.db.as_str()]))
         .body(json!({
             "query": {
@@ -215,15 +217,117 @@ impl Server{
             .build()
             .unwrap()
             .block_on(async {
-                // some async thingy
+                // Get the count of amount of documents to archive
+                let total = self.count_before(epoch).await;
+                let mut count = 0;
+                let mut now : u64 = 0;
+                let mut last500 : Vec<String> = vec![];
+                // Just in case
+                if 0 >= total {
+                    return;
+                }
+
+                // The main loop
+                loop {
+                    // if on the last few documents to archive
+                    let mut last_run = false;
+                    let search_response = self.client
+                        .search(SearchParts::Index(&[self.db.as_str()]))
+                        .body(json!({
+                            "from": 0,
+                            "size": 500,
+                            "query": {
+	                        	"bool": {
+	                        		"must": [
+	                        			{
+	                        				"range": {
+	                        					"time": {
+	                        						"lt": epoch,
+                                                    "gte": now
+	                        					}
+	                        				}
+	                        			}
+	                        		]
+	                        	}
+	                        },
+                            "sort": {
+                                "time": {
+                                    "order": "ASC"
+                                }
+                            }
+                        }))
+                        .send()
+                        .await;
+
+                    if !search_response.is_ok() {
+                        println!("{}", "Failed to search archive".red());
+                        continue;
+                    }
+
+                    let response = search_response
+                        .unwrap()
+                        .json::<Value>()
+                        .await;
+
+                    if !response.is_ok() {
+                        println!("{}", "Archive search responded with a non-zero response!".red());
+                        continue;
+                    }
+
+                    let response_body = response.unwrap();
+
+
+                    let failed = response_body.get("error");
+                    if !failed.is_none() {
+                        println!("{}", "Archiving search had errors!".red());
+                        println!("{:?}", response_body);
+                        continue;
+                    }
+
+                    let items = response_body["hits"]["hits"].as_array().unwrap();
+                    if 500 > items.len() {
+                        println!("Finishing off archiving last {} documents", items.len());
+                        last_run = true;
+                    }
+
+                    // Loop through response
+                    let mut last : Vec<String> = vec![];
+                    for item in items {
+                        if item.get("_source").is_none() {
+                            println!("Dcument doesn't have _source ?");
+                            continue;
+                        }
+                        if item.get("_id").is_none() {
+                            println!("Dcument doesn't have _id ?");
+                            continue;
+                        }
+                        if item["_source"].get("time").is_none() {
+                            println!("Dcument doesn't have time ?");
+                            continue;
+                        }
+                        now = item["_source"]["time"].as_u64().unwrap_or(0);
+                        let id = String::from(item["_id"].as_str().unwrap_or("0"));
+                        last.push(id.clone());
+                        if last500.contains(&id) {
+                            continue;
+                        }
+
+                        count += 1;
+                    }
+                    last500 = last;
+                    let percentage : f32 = count as f32 / total as f32 * 100.0;
+                    println!("{:.2}%  {} / {}", percentage, count, total);
+
+                    if last_run {
+                        println!("Done Archiving");
+                        break;
+                    }
+                }
             });
     }
 
     pub async fn bulk(&self, log : &Vec<Logger>) {
         let mut body: Vec<JsonBody<Value>> = vec![];
-
-        let transport = Transport::single_node(format!("{}://{}:{}", self.protocol, self.hostname, self.port).as_str());
-        let client = Elasticsearch::new(transport.unwrap());
 
         let mut ids : Vec<String> = vec![];
         for elm in log {
@@ -240,7 +344,7 @@ impl Server{
             return;
         }
 
-        let _response = client
+        let _response = self.client
             .bulk(BulkParts::Index(self.db.as_str()))
             .body(body)
             .request_timeout(Duration::from_secs(25))
