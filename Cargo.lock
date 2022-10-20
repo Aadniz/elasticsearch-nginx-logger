@@ -936,6 +936,7 @@ dependencies = [
  "chrono",
  "colored",
  "elasticsearch",
+ "flate2",
  "futures 0.3.24",
  "logwatcher",
  "regex",

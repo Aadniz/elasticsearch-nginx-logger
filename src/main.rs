@@ -10,7 +10,7 @@ pub mod server;
 mod logger;
 
 use server::Server;
-use crate::logger::{Logger, valid_log};
+use crate::logger::{Logger, valid_log, valid_archive, beautify_path};
 use crate::server::*;
 
 fn epoch_days_ago(days : i64) -> i64{
@@ -26,7 +26,8 @@ fn main() {
     // Default values
     let BULK_SIZE = 500;
     //let ARCHIVE_TIME = 30; // Days
-    let ARCHIVE_TIME = 24; // Days
+    let ARCHIVE_TIME = 26; // Days
+    let mut archive_enable = true;
 
     let args: Vec<String> = env::args().collect();
 
@@ -40,15 +41,26 @@ fn main() {
     // Possible default locations
     // First priority from top to bottom
     let mut locations : Vec<&str> = vec![
-        "/tmp/test.log",
-        "/var/log/nginx/access.log"
+        "/var/log/nginx/access.log",
+        "/tmp/test.log"
+    ];
+
+    // Possible default archiving locations
+    // First priority from top to bottom
+    let mut archiving : Vec<&str> = vec![
+        "/mnt/incognito/var/log/nginx",
+        "/mnt/incognito/var/log/***REMOVED***-log"
     ];
 
     // Iterate arguments, skip executable
     let mut new_locations: Vec<&str> = vec![];
     let mut new_servers: Vec<Server> = vec![];
+    let mut new_archiving: Vec<&str> = vec![];
     for arg in &args[1..]{
-        if Path::new(arg).exists() {
+        if Path::new(arg).is_dir() {
+            new_archiving.push(arg);
+        }
+        else if Path::new(arg).exists() {
             new_locations.push(arg);
         }
         else if server::is_url(String::from(arg)){
@@ -65,6 +77,11 @@ fn main() {
     servers.reverse();
     servers.extend(new_servers);
     servers.reverse();
+
+    new_archiving.reverse();
+    archiving.reverse();
+    archiving.extend(new_archiving);
+    archiving.reverse();
 
 
     // Choosing a file path
@@ -116,8 +133,29 @@ fn main() {
         println!("{}", "No server found to log data to".red());
         std::process::exit(1);
     }
-
     let server = _server.unwrap();
+
+    // Choosing an archiving path
+    let mut archive: String = String::from("");
+    println!("Checking archiving output directory ({}: {}, {}: {}, {}: {}): ", "✓".green(), "chosen".green(), "-".yellow(), "skip".yellow(), "X".red(), "Not found".red());
+    for loc in &archiving {
+        print!("[ ] {} ...", loc);
+        stdout().flush().unwrap();
+        if !archive.is_empty() && Path::new(loc).exists() {
+            print!("{}", "\r[-]\n".yellow());
+        }else if valid_archive(loc) {
+            print!("{}", "\r[✓]\n".green());
+            archive = beautify_path(String::from(*loc));
+        }else{
+            print!("{}", "\r[-]\n".yellow());
+        }
+    }
+    if archive.is_empty() {
+        println!("{}", "No archiving directory found to log data to".yellow());
+        println!("{}", "No archiving will be done".yellow());
+        archive_enable = false;
+    }
+    println!();
 
 
     // And then for the actual logging
@@ -136,14 +174,15 @@ fn main() {
             return LogWatcherAction::None;
         }
 
-        log.push(logger.unwrap());
+        log.push(logger.clone().unwrap());
         counter += 1;
+        println!("{}", logger.unwrap());
 
         if counter >= BULK_SIZE {
             // Check if new day and archiving is not happening
             let run1 = Arc::clone(&run);
             let mut running = run1.lock().unwrap();
-            if epoch != epoch_days_ago(ARCHIVE_TIME) && *running == false {
+            if epoch != epoch_days_ago(ARCHIVE_TIME) && !*running && archive_enable {
                 epoch = epoch_days_ago(ARCHIVE_TIME);
                 *running = true;
                 let mut count = 0;
@@ -162,8 +201,9 @@ fn main() {
                     // Setting up variables to be sent to thread
                     let server2 = server.clone();
                     let run2 = Arc::clone(&run);
+                    let archive = archive.clone();
                     thread::spawn(move || {
-                        server2.archive(epoch);
+                        server2.archive(archive, epoch);
                         let mut running = run2.lock().unwrap();
                         *running = false;
                     });

@@ -20,6 +20,7 @@ logwatcher = "0.1.1"
 async-await = "0.2.1"
 sha1 = "0.10.5"
 futures = { version = "0.3", features = ["compat"] }
+flate2 = "1.0.24"
 
 [profile.release]
 strip = true

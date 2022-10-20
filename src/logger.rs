@@ -1,18 +1,20 @@
+use std::fs;
 use std::fs::File;
-use std::io;
+use std::{io, fmt};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use colored::Colorize;
 use serde_json;
 use regex::Regex;
 use reqwest::Response;
-use chrono::{DateTime};
+use chrono::{DateTime, Local, Utc, TimeZone};
 use sha1::{Sha1, Digest};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 
 use serde_derive::{Deserialize, Serialize};
 use serde_json::{Value};
+
 use crate::Server;
 
 
@@ -149,9 +151,62 @@ fn date_to_epoch(str : &str) -> u32{
     datetime.unwrap().timestamp() as u32
 }
 
+
+fn epoch_to_datetime(epoch : i64) -> String {
+    let naive = Local.timestamp(epoch, 0).naive_local();
+    let datetime = DateTime::<Utc>::from_local(naive, Utc);
+    let newdate = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
+    return newdate;
+}
+
+fn dir_write_permission(path : String) -> bool { 
+    let file_path = format!("{}tmp.swp", path);
+
+    // Try creating a file, and then deleting it right afterwards
+    let file_res = File::create(file_path.clone());
+    if !file_res.is_ok() {
+        return false;
+    }
+
+    // Write a &str in the file (ignoring the result).
+    let res = writeln!(&mut file_res.unwrap(), ":)");
+    if !res.is_ok() {
+        return false;
+    }
+    res.unwrap();
+
+    fs::remove_file(file_path.clone()).expect(format!("The program crashed, you need to go delete {} manually", file_path).as_str());
+    true
+}
+
+/// Remove extra slashes in path
+/// From /home///chiya//something → /home/chiya/something/
+pub fn beautify_path(path : String) -> String{
+    let mut new_path : String = String::new();
+    let mut is_slash = false;
+    for (_, c) in path.chars().enumerate() {
+        if c == '/' && is_slash{
+            continue;
+        }else if c == '/'{
+            is_slash = true;
+        }else {
+            is_slash = false;
+        }
+        new_path.push(c);
+    }
+    if new_path.chars().last().unwrap() != '/' {
+        new_path.push('/');
+    }
+    return new_path;
+}
+
 /// Checks if Nginx log has valid format
 pub fn valid_log(loc : &str) -> bool {
     if Path::new(loc).exists() == false {
+        return false;
+    }
+
+    if Path::new(loc).is_dir() {
         return false;
     }
 
@@ -162,6 +217,7 @@ pub fn valid_log(loc : &str) -> bool {
         .open(loc);
 
     if res.is_ok() == false {
+        print!("No read permission");
         return false;
     }
 
@@ -212,6 +268,36 @@ pub fn valid_log(loc : &str) -> bool {
             println!("Quitting...");
             std::process::exit(0);
         }
+    }
+
+    true
+}
+
+/// Checks if Nginx log has valid format
+pub fn valid_archive(loc : &str) -> bool {
+    let loc2 = beautify_path(loc.to_string());
+    if Path::new(loc2.as_str()).exists() == false {
+        print!(" The path does not exist");
+        return false;
+    }
+
+    if Path::new(loc2.as_str()).is_dir() == false {
+        print!(" The path is not a directory");
+        return false;
+    }
+
+    // Check if write permissions in directory
+    //let md = fs::metadata(loc).unwrap();
+    //let permissions = md.permissions();
+    //if permissions.readonly() {
+    //    print!("The directory is not writable!");
+    //    return false;
+    //}
+    // いつから。。。 https://stackoverflow.com/questions/74129865/how-to-check-if-a-directory-has-write-permissions-in-rust/74130122
+    // Doing it the stupid way instead
+    if !dir_write_permission(loc2) {
+        print!(" Probably not write permission");
+        return false;
     }
 
     true
@@ -296,6 +382,56 @@ impl Logger{
             host,
             alt_ip,
             request: String::from(request),
+            refer,
+            status_code,
+            size,
+            user_agent,
+            time
+        })
+    }
+
+    pub fn from_es(es : Value) -> Option<Self> {
+        if es.get("ip").is_none() || es.get("request").is_none() || es.get("status_code").is_none() || es.get("time").is_none() || es.get("size").is_none() {
+            return None;
+        }
+
+        // These values are required
+        let ip = es.get("ip").unwrap().as_str().unwrap().to_string();
+        let request = es.get("request").unwrap().as_str().unwrap().to_string();
+        let status_code = es.get("status_code").unwrap().as_u64().unwrap() as u16;
+        let time = es.get("time").unwrap().as_u64().unwrap() as u32;
+        let size = es.get("size").unwrap().as_u64().unwrap() as u32;
+
+        // Option field for alt_ip
+        let mut alt_ip = None;
+        if !es.get("alt_ip").is_none() && !es.get("alt_ip").unwrap().is_null() {
+            alt_ip = Some(es.get("alt_ip").unwrap().as_str().unwrap().to_string());
+        }
+
+        // Option field for host
+        let mut host = None;
+        if !es.get("host").is_none() && !es.get("host").unwrap().is_null() {
+            host = Some(es.get("host").unwrap().as_str().unwrap().to_string());
+        }
+
+        // Option field for user agent
+        let mut refer = None;
+        if !es.get("refer").is_none() && !es.get("refer").unwrap().is_null() {
+            refer = Some(es.get("refer").unwrap().as_str().unwrap().to_string());
+        }
+
+        // Option field for user agent
+        let mut user_agent = None;
+        if !es.get("user_agent").is_none() && !es.get("user_agent").unwrap().is_null() {
+            user_agent = Some(es.get("user_agent").unwrap().as_str().unwrap().to_string());
+        }
+
+        // Delete this
+        Some(Logger {
+            ip,
+            alt_ip,
+            host,
+            request,
             refer,
             status_code,
             size,
@@ -460,3 +596,32 @@ impl Clone for Logger{
         }
     }
 }
+
+
+impl fmt::Display for Logger{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        //ip: self.ip.clone(),
+        //alt_ip,
+        //host,
+        //request: self.request.clone(),
+        //refer,
+        //status_code: self.status_code.clone(),
+        //size: self.size.clone(),
+        //user_agent,
+        //time: self.time.clone()
+
+        let ip = &self.ip;
+        let alt_ip : String = if self.alt_ip.is_none() { "None".to_string() } else { self.alt_ip.as_ref().unwrap().to_string() };
+        let host : String = if self.host.is_none() { "None".to_string() } else { self.host.as_ref().unwrap().to_string() };
+        let size : String = self.size.to_string();
+        let status_code : String = self.status_code.to_string();
+        let request : String = self.request.clone();
+        let refer : String = if self.refer.is_none() { "None".to_string() } else { self.refer.as_ref().unwrap().to_string() };
+        let user_agent : String = if self.user_agent.is_none() { "None".to_string() } else { self.user_agent.as_ref().unwrap().to_string() };
+        let time = epoch_to_datetime(self.time as i64);
+
+        let line = format!("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", ip, alt_ip, host, size, status_code, request, refer, user_agent, time);
+        write!(f, "{}", line)
+    }
+}
+

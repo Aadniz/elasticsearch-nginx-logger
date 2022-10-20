@@ -1,5 +1,6 @@
 use std::{fmt, io, time, thread};
-use std::io::{Write};
+use std::fs::File;
+use std::io::Write;
 use std::time::Duration;
 use regex::Regex;
 use reqwest;
@@ -9,6 +10,9 @@ use colored::Colorize;
 use elasticsearch::{BulkParts, Elasticsearch, CountParts, SearchParts};
 use elasticsearch::http::request::JsonBody;
 use elasticsearch::http::transport::Transport;
+use chrono::{TimeZone, NaiveDate, NaiveDateTime, Utc, DateTime, Local};
+use flate2::Compression;
+use flate2::write::ZlibEncoder;
 
 use crate::logger::Logger;
 
@@ -25,6 +29,12 @@ pub fn is_json(str : &str) -> Result<()>{
     let _res: Value = serde_json::from_str(str)?;
     Ok(())
 }
+
+fn epoch_to_date(epoch : i64) -> NaiveDate{
+    return Utc.timestamp(epoch, 0).date_naive();
+}
+
+
 
 /// Checks if the server is an elasticsearch server
 pub async fn is_es(ser : Server) -> bool{
@@ -211,7 +221,7 @@ impl Server{
         return response_body.get("count").unwrap().as_i64().unwrap();
     }
 
-    pub fn archive(&self, epoch : i64) {
+    pub fn archive(&self, path : String, epoch : i64) {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -226,6 +236,10 @@ impl Server{
                 if 0 >= total {
                     return;
                 }
+
+                let file_name = format!("***REMOVED***-{}.log.zz", epoch_to_date(epoch));
+                let full_path = format!("{}{}", path, file_name);
+                let mut e = ZlibEncoder::new(Vec::new(), Compression::best());
 
                 // The main loop
                 loop {
@@ -261,6 +275,7 @@ impl Server{
 
                     if !search_response.is_ok() {
                         println!("{}", "Failed to search archive".red());
+                        thread::sleep(time::Duration::from_secs(6));
                         continue;
                     }
 
@@ -271,6 +286,7 @@ impl Server{
 
                     if !response.is_ok() {
                         println!("{}", "Archive search responded with a non-zero response!".red());
+                        thread::sleep(time::Duration::from_secs(6));
                         continue;
                     }
 
@@ -281,6 +297,7 @@ impl Server{
                     if !failed.is_none() {
                         println!("{}", "Archiving search had errors!".red());
                         println!("{:?}", response_body);
+                        thread::sleep(time::Duration::from_secs(6));
                         continue;
                     }
 
@@ -312,6 +329,10 @@ impl Server{
                             continue;
                         }
 
+                        // Actually writing the line
+                        let log = Logger::from_es(item["_source"].to_owned()).unwrap();
+                        let line = format!("{}", log);
+                        e.write_all(line.as_bytes()).unwrap();
                         count += 1;
                     }
                     last500 = last;
@@ -319,6 +340,11 @@ impl Server{
                     println!("{:.2}%  {} / {}", percentage, count, total);
 
                     if last_run {
+                        let compressed_bytes = e.finish();
+
+                        let mut output = File::create(full_path).unwrap();
+                        output.write_all(&compressed_bytes.unwrap()).unwrap();
+
                         println!("Done Archiving");
                         break;
                     }
