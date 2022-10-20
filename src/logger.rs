@@ -13,7 +13,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 
 use serde_derive::{Deserialize, Serialize};
-use serde_json::{Value};
+use serde_json::Value;
 
 use crate::Server;
 
@@ -600,16 +600,6 @@ impl Clone for Logger{
 
 impl fmt::Display for Logger{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        //ip: self.ip.clone(),
-        //alt_ip,
-        //host,
-        //request: self.request.clone(),
-        //refer,
-        //status_code: self.status_code.clone(),
-        //size: self.size.clone(),
-        //user_agent,
-        //time: self.time.clone()
-
         let ip = &self.ip;
         let alt_ip : String = if self.alt_ip.is_none() { "None".to_string() } else { self.alt_ip.as_ref().unwrap().to_string() };
         let host : String = if self.host.is_none() { "None".to_string() } else { self.host.as_ref().unwrap().to_string() };
@@ -620,7 +610,7 @@ impl fmt::Display for Logger{
         let user_agent : String = if self.user_agent.is_none() { "None".to_string() } else { self.user_agent.as_ref().unwrap().to_string() };
         let time = epoch_to_datetime(self.time as i64);
 
-        let line = format!("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", ip, alt_ip, host, size, status_code, request, refer, user_agent, time);
+        let line = format!("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", time, ip, alt_ip, host, status_code, request, refer, user_agent, size);
         write!(f, "{}", line)
     }
 }

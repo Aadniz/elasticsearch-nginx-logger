@@ -174,15 +174,14 @@ fn main() {
             return LogWatcherAction::None;
         }
 
-        log.push(logger.clone().unwrap());
+        log.push(logger.unwrap());
         counter += 1;
-        println!("{}", logger.unwrap());
 
         if counter >= BULK_SIZE {
             // Check if new day and archiving is not happening
             let run1 = Arc::clone(&run);
             let mut running = run1.lock().unwrap();
-            if epoch != epoch_days_ago(ARCHIVE_TIME) && !*running && archive_enable {
+            if epoch == epoch_days_ago(ARCHIVE_TIME) && !*running && archive_enable {
                 epoch = epoch_days_ago(ARCHIVE_TIME);
                 *running = true;
                 let mut count = 0;

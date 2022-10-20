@@ -10,7 +10,7 @@ use colored::Colorize;
 use elasticsearch::{BulkParts, Elasticsearch, CountParts, SearchParts};
 use elasticsearch::http::request::JsonBody;
 use elasticsearch::http::transport::Transport;
-use chrono::{TimeZone, NaiveDate, NaiveDateTime, Utc, DateTime, Local};
+use chrono::{TimeZone, NaiveDate, Utc};
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
 
@@ -240,9 +240,11 @@ impl Server{
                 let file_name = format!("***REMOVED***-{}.log.zz", epoch_to_date(epoch));
                 let full_path = format!("{}{}", path, file_name);
                 let mut e = ZlibEncoder::new(Vec::new(), Compression::best());
+                print!("Running");
 
                 // The main loop
                 loop {
+                    print!(".");
                     // if on the last few documents to archive
                     let mut last_run = false;
                     let search_response = self.client
@@ -331,13 +333,13 @@ impl Server{
 
                         // Actually writing the line
                         let log = Logger::from_es(item["_source"].to_owned()).unwrap();
-                        let line = format!("{}", log);
+                        let line = format!("{}\n", log);
                         e.write_all(line.as_bytes()).unwrap();
                         count += 1;
                     }
                     last500 = last;
-                    let percentage : f32 = count as f32 / total as f32 * 100.0;
-                    println!("{:.2}%  {} / {}", percentage, count, total);
+                    //let percentage : f32 = count as f32 / total as f32 * 100.0;
+                    //println!("{:.2}%  {} / {}", percentage, count, total);
 
                     if last_run {
                         let compressed_bytes = e.finish();
