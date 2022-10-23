@@ -26,7 +26,7 @@ fn main() {
     // Default values
     let BULK_SIZE = 500;
     //let ARCHIVE_TIME = 30; // Days
-    let ARCHIVE_TIME = 26; // Days
+    let ARCHIVE_TIME = 30; // Days
     let mut archive_enable = true;
 
     let args: Vec<String> = env::args().collect();
@@ -181,7 +181,7 @@ fn main() {
             // Check if new day and archiving is not happening
             let run1 = Arc::clone(&run);
             let mut running = run1.lock().unwrap();
-            if epoch == epoch_days_ago(ARCHIVE_TIME) && !*running && archive_enable {
+            if epoch != epoch_days_ago(ARCHIVE_TIME) && !*running && archive_enable {
                 epoch = epoch_days_ago(ARCHIVE_TIME);
                 *running = true;
                 let mut count = 0;
@@ -206,6 +206,8 @@ fn main() {
                         let mut running = run2.lock().unwrap();
                         *running = false;
                     });
+                }else{
+                    println!("Nothing to archive. No documents older than {} days.", ARCHIVE_TIME);
                 }
             }
             //else {

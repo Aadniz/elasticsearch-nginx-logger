@@ -7,7 +7,7 @@ use reqwest;
 use reqwest::Client;
 use serde_json::{json, Result, Value};
 use colored::Colorize;
-use elasticsearch::{BulkParts, Elasticsearch, CountParts, SearchParts};
+use elasticsearch::{BulkParts, Elasticsearch, CountParts, SearchParts, DeleteByQueryParts};
 use elasticsearch::http::request::JsonBody;
 use elasticsearch::http::transport::Transport;
 use chrono::{TimeZone, NaiveDate, Utc};
@@ -221,6 +221,49 @@ impl Server{
         return response_body.get("count").unwrap().as_i64().unwrap();
     }
 
+    async fn delete_before(&self, epoch : i64) {
+        let delete_query = self.client
+            .delete_by_query(DeleteByQueryParts::Index(&[self.db.as_str()]))
+            .body(json!({
+                "query": {
+	            	"bool": {
+	            		"must": [
+	            			{
+	            				"range": {
+	            					"time": {
+	            						"lt": epoch
+	            					}
+	            				}
+	            			}
+	            		]
+	            	}
+	            }
+            }))
+            .send()
+            .await;
+
+            if !delete_query.is_ok() {
+                println!("{}", "Failed to delete by query!".red());
+                thread::sleep(time::Duration::from_secs(6));
+                return;
+            }
+
+            let response = delete_query
+                .unwrap()
+                .json::<Value>()
+                .await;
+
+            if !response.is_ok() {
+                println!("{}", "Delete by query responded with a non-zero response!".red());
+                thread::sleep(time::Duration::from_secs(6));
+                return;
+            }
+
+            let response_body = response.unwrap();
+            println!("{:?}", response_body);
+    }
+
+    /// This function archives all documents before epoch time to an archive directory
     pub fn archive(&self, path : String, epoch : i64) {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -231,6 +274,7 @@ impl Server{
                 let total = self.count_before(epoch).await;
                 let mut count = 0;
                 let mut now : u64 = 0;
+                let mut prev_now : u64 = 0;
                 let mut last500 : Vec<String> = vec![];
                 // Just in case
                 if 0 >= total {
@@ -348,8 +392,16 @@ impl Server{
                         output.write_all(&compressed_bytes.unwrap()).unwrap();
 
                         println!("Done Archiving");
+                        self.delete_before(epoch).await;
                         break;
                     }
+
+                    // In case it loops through 500 documents, all with the same timestamp
+                    if now == prev_now {
+                        print!("+");
+                        now += 1;
+                    }
+                    prev_now = now;
                 }
             });
     }
