@@ -208,6 +208,9 @@ fn main() {
                     });
                 }else{
                     println!("Nothing to archive. No documents older than {} days.", ARCHIVE_TIME);
+                    let run2 = Arc::clone(&run);
+                    let mut running = run2.lock().unwrap();
+                    *running = false;
                 }
             }
             //else {
