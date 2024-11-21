@@ -328,7 +328,7 @@ impl Logger {
             return None;
         }
 
-        // 127.0.0.1, 84.213.100.23 - - [20/Jul/2022:22:12:47 +0200] "***REMOVED***.ru" "GET /index.html HTTP/1.1" 403    153    "https://google.com/q=test" "Mozilla/5.0 (X11; Linux x86_64; rv:102.0) Gecko/20100101 Firefox/102.0"
+        // 127.0.0.1, 84.213.100.23 - - [20/Jul/2022:22:12:47 +0200] "example.com" "GET /index.html HTTP/1.1" 403    153    "https://google.com/q=test" "Mozilla/5.0 (X11; Linux x86_64; rv:102.0) Gecko/20100101 Firefox/102.0"
         // cap[1]                        cap[2]                       cap[3]      cap[4]                    cap[5] cap[6]  cap[7]                      cap[8]
         let cap = re.captures(line.as_str())?;
 

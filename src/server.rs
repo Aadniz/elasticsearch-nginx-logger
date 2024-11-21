@@ -290,7 +290,7 @@ impl Server {
                     return;
                 }
 
-                let file_name = format!("***REMOVED***-{}.log.zz", epoch_to_date(epoch));
+                let file_name = format!("example-{}.log.zz", epoch_to_date(epoch));
                 let full_path = format!("{}{}", path, file_name);
                 let mut e = ZlibEncoder::new(Vec::new(), Compression::best());
                 print!("Running");

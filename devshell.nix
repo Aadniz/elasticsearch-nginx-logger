@@ -9,10 +9,18 @@
   rustPlatform,
   openssl,
   pkg-config,
-  libiconv
+  python311Packages
 }:
 mkShell {
   strictDeps = true;
+
+  # Python analytics dependencies
+  packages = with python311Packages; [
+    python
+    elasticsearch
+    elastic-transport
+    matplotlib
+  ];
 
   nativeBuildInputs = [
     cargo

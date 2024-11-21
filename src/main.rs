@@ -49,7 +49,7 @@ fn main() {
     // First priority from top to bottom
     let mut archiving: Vec<&str> = vec![
         "/mnt/incognito/var/log/nginx",
-        "/mnt/incognito/var/log/***REMOVED***-log",
+        "/mnt/incognito/var/log/example-log",
     ];
 
     // Iterate arguments, skip executable
