@@ -1,43 +1,41 @@
-use std::{fmt, io, time, thread};
-use std::fs::File;
-use std::io::Write;
-use std::time::Duration;
+use chrono::{NaiveDate, TimeZone, Utc};
+use colored::Colorize;
+use elasticsearch::http::request::JsonBody;
+use elasticsearch::http::transport::Transport;
+use elasticsearch::{BulkParts, CountParts, DeleteByQueryParts, Elasticsearch, SearchParts};
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
 use regex::Regex;
 use reqwest;
 use reqwest::Client;
 use serde_json::{json, Result, Value};
-use colored::Colorize;
-use elasticsearch::{BulkParts, Elasticsearch, CountParts, SearchParts, DeleteByQueryParts};
-use elasticsearch::http::request::JsonBody;
-use elasticsearch::http::transport::Transport;
-use chrono::{TimeZone, NaiveDate, Utc};
-use flate2::Compression;
-use flate2::write::ZlibEncoder;
+use std::fs::File;
+use std::io::Write;
+use std::time::Duration;
+use std::{fmt, io, thread, time};
 
 use crate::logger::Logger;
 
-
 /// Checks if the string is an URL with regex
-pub fn is_url(str1 : String) -> bool{
+pub fn is_url(str1: String) -> bool {
     let str = str1.as_str();
-    let re = Regex::new(r#"(http|https)://([^/ :]+):?([^/ ]*)/?(/?[^ #?]*)\x3f?([^ #]*)#?([^ ]*)"#).unwrap();
+    let re = Regex::new(r#"(http|https)://([^/ :]+):?([^/ ]*)/?(/?[^ #?]*)\x3f?([^ #]*)#?([^ ]*)"#)
+        .unwrap();
     return re.is_match(str);
 }
 
 /// Checks if the string is a valid JSON
-pub fn is_json(str : &str) -> Result<()>{
+pub fn is_json(str: &str) -> Result<()> {
     let _res: Value = serde_json::from_str(str)?;
     Ok(())
 }
 
-fn epoch_to_date(epoch : i64) -> NaiveDate{
+fn epoch_to_date(epoch: i64) -> NaiveDate {
     return Utc.timestamp(epoch, 0).date_naive();
 }
 
-
-
 /// Checks if the server is an elasticsearch server
-pub async fn is_es(ser : Server) -> bool{
+pub async fn is_es(ser: Server) -> bool {
     let indexes = ["name", "cluster_name", "cluster_uuid", "version", "tagline"];
 
     let url = format!("{}://{}:{}", ser.protocol, ser.hostname, ser.port);
@@ -48,14 +46,8 @@ pub async fn is_es(ser : Server) -> bool{
         .connect_timeout(Duration::from_secs(16))
         .build()
         .unwrap();
-    let response = client
-        .get(url.as_str())
-        .send()
-        .await;
-    let text = response
-        .unwrap()
-        .text()
-        .await;
+    let response = client.get(url.as_str()).send().await;
+    let text = response.unwrap().text().await;
     if is_json(text.as_ref().unwrap().as_str()).is_ok() == false {
         print!("{}", " (Response is not json)".red());
         return false;
@@ -77,7 +69,7 @@ pub async fn is_es(ser : Server) -> bool{
 }
 
 /// Checks if Elasticsearch database exists
-pub async fn db_exists(ser : Server) -> bool {
+pub async fn db_exists(ser: Server) -> bool {
     if ser.db == "" {
         print!("{}", " (No db specified)".red());
         return false;
@@ -85,7 +77,10 @@ pub async fn db_exists(ser : Server) -> bool {
     if is_es(ser.clone()).await == false {
         return false;
     }
-    let url = format!("{}://{}:{}/{}", ser.protocol, ser.hostname, ser.port, ser.db);
+    let url = format!(
+        "{}://{}:{}/{}",
+        ser.protocol, ser.hostname, ser.port, ser.db
+    );
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(16))
         .build()
@@ -94,15 +89,22 @@ pub async fn db_exists(ser : Server) -> bool {
     let res = response.unwrap();
     if res.status() != reqwest::StatusCode::OK {
         println!();
-        println!("  Found elasticsearch database, but DB ({}) does not exist.", ser.db);
-        println!("  Do you want to create {} at {}://{}:{} ?", ser.db, ser.protocol, ser.hostname, ser.port);
+        println!(
+            "  Found elasticsearch database, but DB ({}) does not exist.",
+            ser.db
+        );
+        println!(
+            "  Do you want to create {} at {}://{}:{} ?",
+            ser.db, ser.protocol, ser.hostname, ser.port
+        );
         print!("({}/{}/{}) > ", "y".green(), "n".red(), "q".yellow());
         let _ = io::stdout().flush();
         let mut user_input = String::new();
         let stdin = io::stdin();
         stdin.read_line(&mut user_input).expect("Expect input");
         user_input = String::from(user_input.trim());
-        if user_input != "y" && user_input != "q" { // if n or something else
+        if user_input != "y" && user_input != "q" {
+            // if n or something else
             return false;
         } else if user_input == "q" {
             println!("Quitting...");
@@ -116,15 +118,18 @@ pub async fn db_exists(ser : Server) -> bool {
         return false;
     }
     if Logger::valid_mapping(ser.db.clone(), res).await == false {
-        print!("{}", " (Elasticsearch was found, but it has the incorrect mapping)".yellow());
+        print!(
+            "{}",
+            " (Elasticsearch was found, but it has the incorrect mapping)".yellow()
+        );
         return false;
     }
     true
 }
 
 /// Checks if host is reachable
-pub async fn is_up(str1 : String) -> bool{
-    if is_url(str1.clone()) == false{
+pub async fn is_up(str1: String) -> bool {
+    if is_url(str1.clone()) == false {
         return false;
     }
     let client = Client::builder()
@@ -140,16 +145,18 @@ pub async fn is_up(str1 : String) -> bool{
 }
 
 /// Server, containing protocol, hostname, port and db
-pub struct Server{
-    protocol : String,
-    hostname : String,
-    port : u16,
-    db : String,
-    client: Elasticsearch
+pub struct Server {
+    protocol: String,
+    hostname: String,
+    port: u16,
+    db: String,
+    client: Elasticsearch,
 }
-impl Server{
-    pub fn new(str : &str) -> Self {
-        let re = Regex::new(r#"(http|https)://([^/ :]+):?([^/ ]*)/?(/?[^ #?]*)\x3f?([^ #]*)#?([^ ]*)"#).unwrap();
+impl Server {
+    pub fn new(str: &str) -> Self {
+        let re =
+            Regex::new(r#"(http|https)://([^/ :]+):?([^/ ]*)/?(/?[^ #?]*)\x3f?([^ #]*)#?([^ ]*)"#)
+                .unwrap();
         let cap = re.captures(str).expect("Expected valid url");
 
         let protocol = String::from(&cap[1]);
@@ -157,7 +164,8 @@ impl Server{
         let port = cap[3].parse::<u16>().unwrap_or(9200);
         let db = String::from(&cap[4]);
 
-        let transport = Transport::single_node(format!("{}://{}:{}", protocol, hostname, port).as_str());
+        let transport =
+            Transport::single_node(format!("{}://{}:{}", protocol, hostname, port).as_str());
         let client = Elasticsearch::new(transport.unwrap());
 
         Server {
@@ -165,47 +173,48 @@ impl Server{
             hostname,
             port,
             db,
-            client
+            client,
         }
     }
 
     pub fn get_url(&self) -> String {
-        format!("{}://{}:{}/{}", self.protocol, self.hostname, self.port, self.db)
+        format!(
+            "{}://{}:{}/{}",
+            self.protocol, self.hostname, self.port, self.db
+        )
     }
     pub fn get_host(&self) -> String {
         format!("{}://{}:{}", self.protocol, self.hostname, self.port)
     }
 
-    pub async fn count_before(&self, epoch: i64) -> i64{
-        let search_response = self.client
-        .count(CountParts::Index(&[self.db.as_str()]))
-        .body(json!({
-            "query": {
-	        	"bool": {
-	        		"must": [
-	        			{
-	        				"range": {
-	        					"time": {
-	        						"lt": epoch
-	        					}
-	        				}
-	        			}
-	        		]
-	        	}
-	        }
-        }))
-        .send()
-        .await;
+    pub async fn count_before(&self, epoch: i64) -> i64 {
+        let search_response = self
+            .client
+            .count(CountParts::Index(&[self.db.as_str()]))
+            .body(json!({
+                "query": {
+                    "bool": {
+                        "must": [
+                            {
+                                "range": {
+                                    "time": {
+                                        "lt": epoch
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }))
+            .send()
+            .await;
 
         if !search_response.is_ok() {
             println!("{}", "Failed to send count request".red());
             return -1;
         }
 
-        let response = search_response
-            .unwrap()
-            .json::<Value>()
-            .await;
+        let response = search_response.unwrap().json::<Value>().await;
 
         if !response.is_ok() {
             println!("{}", "Responded with a non-ok message!".red());
@@ -221,50 +230,51 @@ impl Server{
         return response_body.get("count").unwrap().as_i64().unwrap();
     }
 
-    async fn delete_before(&self, epoch : i64) {
-        let delete_query = self.client
+    async fn delete_before(&self, epoch: i64) {
+        let delete_query = self
+            .client
             .delete_by_query(DeleteByQueryParts::Index(&[self.db.as_str()]))
             .body(json!({
                 "query": {
-	            	"bool": {
-	            		"must": [
-	            			{
-	            				"range": {
-	            					"time": {
-	            						"lt": epoch
-	            					}
-	            				}
-	            			}
-	            		]
-	            	}
-	            }
+                    "bool": {
+                        "must": [
+                            {
+                                "range": {
+                                    "time": {
+                                        "lt": epoch
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
             }))
             .send()
             .await;
 
-            if !delete_query.is_ok() {
-                println!("{}", "Failed to delete by query!".red());
-                thread::sleep(time::Duration::from_secs(6));
-                return;
-            }
+        if !delete_query.is_ok() {
+            println!("{}", "Failed to delete by query!".red());
+            thread::sleep(time::Duration::from_secs(6));
+            return;
+        }
 
-            let response = delete_query
-                .unwrap()
-                .json::<Value>()
-                .await;
+        let response = delete_query.unwrap().json::<Value>().await;
 
-            if !response.is_ok() {
-                println!("{}", "Delete by query responded with a non-zero response!".red());
-                thread::sleep(time::Duration::from_secs(6));
-                return;
-            }
+        if !response.is_ok() {
+            println!(
+                "{}",
+                "Delete by query responded with a non-zero response!".red()
+            );
+            thread::sleep(time::Duration::from_secs(6));
+            return;
+        }
 
-            let response_body = response.unwrap();
-            println!("{:?}", response_body);
+        let response_body = response.unwrap();
+        println!("{:?}", response_body);
     }
 
     /// This function archives all documents before epoch time to an archive directory
-    pub fn archive(&self, path : String, epoch : i64) {
+    pub fn archive(&self, path: String, epoch: i64) {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -272,10 +282,9 @@ impl Server{
             .block_on(async {
                 // Get the count of amount of documents to archive
                 let total = self.count_before(epoch).await;
-                let mut count = 0;
-                let mut now : u64 = 0;
-                let mut prev_now : u64 = 0;
-                let mut last500 : Vec<String> = vec![];
+                let mut now: u64 = 0;
+                let mut prev_now: u64 = 0;
+                let mut last500: Vec<String> = vec![];
                 // Just in case
                 if 0 >= total {
                     return;
@@ -291,25 +300,26 @@ impl Server{
                     print!(".");
                     // if on the last few documents to archive
                     let mut last_run = false;
-                    let search_response = self.client
+                    let search_response = self
+                        .client
                         .search(SearchParts::Index(&[self.db.as_str()]))
                         .body(json!({
                             "from": 0,
                             "size": 500,
                             "query": {
-	                        	"bool": {
-	                        		"must": [
-	                        			{
-	                        				"range": {
-	                        					"time": {
-	                        						"lt": epoch,
+                                "bool": {
+                                    "must": [
+                                        {
+                                            "range": {
+                                                "time": {
+                                                    "lt": epoch,
                                                     "gte": now
-	                        					}
-	                        				}
-	                        			}
-	                        		]
-	                        	}
-	                        },
+                                                }
+                                            }
+                                        }
+                                    ]
+                                }
+                            },
                             "sort": {
                                 "time": {
                                     "order": "ASC"
@@ -325,19 +335,18 @@ impl Server{
                         continue;
                     }
 
-                    let response = search_response
-                        .unwrap()
-                        .json::<Value>()
-                        .await;
+                    let response = search_response.unwrap().json::<Value>().await;
 
                     if !response.is_ok() {
-                        println!("{}", "Archive search responded with a non-zero response!".red());
+                        println!(
+                            "{}",
+                            "Archive search responded with a non-zero response!".red()
+                        );
                         thread::sleep(time::Duration::from_secs(6));
                         continue;
                     }
 
                     let response_body = response.unwrap();
-
 
                     let failed = response_body.get("error");
                     if !failed.is_none() {
@@ -354,7 +363,7 @@ impl Server{
                     }
 
                     // Loop through response
-                    let mut last : Vec<String> = vec![];
+                    let mut last: Vec<String> = vec![];
                     for item in items {
                         if item.get("_source").is_none() {
                             println!("Dcument doesn't have _source ?");
@@ -379,11 +388,8 @@ impl Server{
                         let log = Logger::from_es(item["_source"].to_owned()).unwrap();
                         let line = format!("{}\n", log);
                         e.write_all(line.as_bytes()).unwrap();
-                        count += 1;
                     }
                     last500 = last;
-                    //let percentage : f32 = count as f32 / total as f32 * 100.0;
-                    //println!("{:.2}%  {} / {}", percentage, count, total);
 
                     if last_run {
                         let compressed_bytes = e.finish();
@@ -406,10 +412,10 @@ impl Server{
             });
     }
 
-    pub async fn bulk(&self, log : &Vec<Logger>) {
+    pub async fn bulk(&self, log: &Vec<Logger>) {
         let mut body: Vec<JsonBody<Value>> = vec![];
 
-        let mut ids : Vec<String> = vec![];
+        let mut ids: Vec<String> = vec![];
         for elm in log {
             let id = elm.get_id();
             if !ids.contains(&id) {
@@ -424,22 +430,20 @@ impl Server{
             return;
         }
 
-        let _response = self.client
+        let _response = self
+            .client
             .bulk(BulkParts::Index(self.db.as_str()))
             .body(body)
             .request_timeout(Duration::from_secs(25))
             .send()
             .await;
 
-        if !_response.is_ok(){
+        if !_response.is_ok() {
             println!("{}", "Failed to create bulk".red());
             return;
         }
 
-        let response = _response
-            .unwrap()
-            .json::<Value>()
-            .await;
+        let response = _response.unwrap().json::<Value>().await;
 
         if !response.is_ok() {
             println!("{}", "Responded with a non-ok message!".red());
@@ -447,7 +451,6 @@ impl Server{
         }
 
         let response_body = response.unwrap();
-
 
         let successful = response_body["errors"].as_bool().unwrap_or(false) == false;
         if !successful {
@@ -480,18 +483,16 @@ impl Server{
         println!("Successfully indexed {} documents", counter);
     }
 }
-impl fmt::Display for Server{
+impl fmt::Display for Server {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let hostname = self.get_url();
         write!(f, "{}", hostname)
     }
 }
-impl Clone for Server{
+impl Clone for Server {
     fn clone(&self) -> Server {
         let url = self.get_url();
-        let server : Server = Server::new(url.as_str());
+        let server: Server = Server::new(url.as_str());
         server
     }
 }
-
-

@@ -1,36 +1,34 @@
-use std::fs;
-use std::fs::File;
-use std::{io, fmt};
-use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use chrono::{DateTime, Local, TimeZone, Utc};
 use colored::Colorize;
-use serde_json;
 use regex::Regex;
 use reqwest::Response;
-use chrono::{DateTime, Local, Utc, TimeZone};
-use sha1::{Sha1, Digest};
+use serde_json;
+use sha1::{Digest, Sha1};
+use std::fs;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, Ipv6Addr};
-
+use std::path::Path;
+use std::{fmt, io};
 
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::Server;
 
-
 ///
 /// When will nested structs be supported
 #[derive(Serialize, Deserialize)]
-struct Mapping{
-    mappings: Mappings
+struct Mapping {
+    mappings: Mappings,
 }
 #[derive(Serialize, Deserialize)]
-struct Mappings{
+struct Mappings {
     dynamic: String,
-    properties: Properties
+    properties: Properties,
 }
 #[derive(Serialize, Deserialize)]
-struct Properties{
+struct Properties {
     ip: Ip,
     alt_ip: Ip,
     host: Text,
@@ -39,99 +37,99 @@ struct Properties{
     status_code: Short,
     size: Integer,
     user_agent: Text,
-    time: EpochS
+    time: EpochS,
 }
 #[derive(Serialize, Deserialize)]
-struct Ip{
-    r#type: String
-}
-#[derive(Serialize, Deserialize)]
-struct Text{
+struct Ip {
     r#type: String,
-    fields: TextFields
 }
 #[derive(Serialize, Deserialize)]
-struct TextFields{
-    keyword: Keyword
-}
-#[derive(Serialize, Deserialize)]
-struct Keyword{
+struct Text {
     r#type: String,
-    ignore_above: u16
+    fields: TextFields,
 }
 #[derive(Serialize, Deserialize)]
-struct Short{
-    r#type: String
+struct TextFields {
+    keyword: Keyword,
 }
 #[derive(Serialize, Deserialize)]
-struct Integer{
-    r#type: String
+struct Keyword {
+    r#type: String,
+    ignore_above: u16,
+}
+#[derive(Serialize, Deserialize)]
+struct Short {
+    r#type: String,
+}
+#[derive(Serialize, Deserialize)]
+struct Integer {
+    r#type: String,
 }
 #[derive(Serialize, Deserialize)]
 struct EpochS {
     r#type: String,
-    format: String
+    format: String,
 }
-impl Mapping{
+impl Mapping {
     pub fn new() -> Self {
         Mapping {
             mappings: Mappings {
                 dynamic: "false".to_string(),
                 properties: Properties {
                     ip: Ip {
-                        r#type: "ip".to_string()
+                        r#type: "ip".to_string(),
                     },
                     alt_ip: Ip {
-                        r#type: "ip".to_string()
+                        r#type: "ip".to_string(),
                     },
                     host: Text {
                         r#type: "text".to_string(),
                         fields: TextFields {
                             keyword: Keyword {
                                 r#type: "keyword".to_string(),
-                                ignore_above: 256
-                            }
-                        }
+                                ignore_above: 256,
+                            },
+                        },
                     },
                     request: Text {
                         r#type: "text".to_string(),
                         fields: TextFields {
                             keyword: Keyword {
                                 r#type: "keyword".to_string(),
-                                ignore_above: 256
-                            }
-                        }
+                                ignore_above: 256,
+                            },
+                        },
                     },
                     refer: Text {
                         r#type: "text".to_string(),
                         fields: TextFields {
                             keyword: Keyword {
                                 r#type: "keyword".to_string(),
-                                ignore_above: 256
-                            }
-                        }
+                                ignore_above: 256,
+                            },
+                        },
                     },
                     status_code: Short {
-                        r#type: "short".to_string()
+                        r#type: "short".to_string(),
                     },
                     size: Integer {
-                        r#type: "integer".to_string()
+                        r#type: "integer".to_string(),
                     },
                     user_agent: Text {
                         r#type: "text".to_string(),
                         fields: TextFields {
                             keyword: Keyword {
                                 r#type: "keyword".to_string(),
-                                ignore_above: 256
-                            }
-                        }
+                                ignore_above: 256,
+                            },
+                        },
                     },
                     time: EpochS {
                         r#type: "date".to_string(),
-                        format: "epoch_second".to_string()
-                    }
-                }
-            }
+                        format: "epoch_second".to_string(),
+                    },
+                },
+            },
         }
     }
 }
@@ -142,7 +140,7 @@ impl Mapping{
 /// ```
 /// 17/Sep/2022:23:39:19 +0200
 /// ```
-fn date_to_epoch(str : &str) -> u32{
+fn date_to_epoch(str: &str) -> u32 {
     let datetime = DateTime::parse_from_str(str, "%d/%b/%Y:%H:%M:%S %z");
     if datetime.is_ok() == false {
         return 0;
@@ -151,15 +149,14 @@ fn date_to_epoch(str : &str) -> u32{
     datetime.unwrap().timestamp() as u32
 }
 
-
-fn epoch_to_datetime(epoch : i64) -> String {
+fn epoch_to_datetime(epoch: i64) -> String {
     let naive = Local.timestamp(epoch, 0).naive_local();
     let datetime = DateTime::<Utc>::from_local(naive, Utc);
     let newdate = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
     return newdate;
 }
 
-fn dir_write_permission(path : String) -> bool { 
+fn dir_write_permission(path: String) -> bool {
     let file_path = format!("{}tmp.swp", path);
 
     // Try creating a file, and then deleting it right afterwards
@@ -175,21 +172,27 @@ fn dir_write_permission(path : String) -> bool {
     }
     res.unwrap();
 
-    fs::remove_file(file_path.clone()).expect(format!("The program crashed, you need to go delete {} manually", file_path).as_str());
+    fs::remove_file(file_path.clone()).expect(
+        format!(
+            "The program crashed, you need to go delete {} manually",
+            file_path
+        )
+        .as_str(),
+    );
     true
 }
 
 /// Remove extra slashes in path
 /// From /home///chiya//something → /home/chiya/something/
-pub fn beautify_path(path : String) -> String{
-    let mut new_path : String = String::new();
+pub fn beautify_path(path: String) -> String {
+    let mut new_path: String = String::new();
     let mut is_slash = false;
     for (_, c) in path.chars().enumerate() {
-        if c == '/' && is_slash{
+        if c == '/' && is_slash {
             continue;
-        }else if c == '/'{
+        } else if c == '/' {
             is_slash = true;
-        }else {
+        } else {
             is_slash = false;
         }
         new_path.push(c);
@@ -201,7 +204,7 @@ pub fn beautify_path(path : String) -> String{
 }
 
 /// Checks if Nginx log has valid format
-pub fn valid_log(loc : &str) -> bool {
+pub fn valid_log(loc: &str) -> bool {
     if Path::new(loc).exists() == false {
         return false;
     }
@@ -211,10 +214,7 @@ pub fn valid_log(loc : &str) -> bool {
     }
 
     // Check if able to read file
-    let res = File::options()
-        .read(true)
-        .write(false)
-        .open(loc);
+    let res = File::options().read(true).write(false).open(loc);
 
     if res.is_ok() == false {
         print!("No read permission");
@@ -243,14 +243,17 @@ pub fn valid_log(loc : &str) -> bool {
     if counter == 0 {
         println!("  Found file, but it's empty: {}", loc);
         error = true;
-    }else if 4 > counter {
+    } else if 4 > counter {
         println!("  Found file, but it contains less than 4 lines: {}", loc);
         error = true;
-    }else{
+    } else {
         success_rate = (counter - fails) as f64 / counter as f64;
     }
     if 0.75 > success_rate && success_rate != 0.00 {
-        println!("  Format errors in this file: ~{}%", (success_rate*100.0).round());
+        println!(
+            "  Format errors in this file: ~{}%",
+            (success_rate * 100.0).round()
+        );
         error = true;
     }
 
@@ -262,7 +265,8 @@ pub fn valid_log(loc : &str) -> bool {
         let stdin = io::stdin();
         stdin.read_line(&mut user_input).expect("Expect input");
         user_input = String::from(user_input.trim());
-        if user_input != "y" && user_input != "q" { // if n or something else
+        if user_input != "y" && user_input != "q" {
+            // if n or something else
             return false;
         } else if user_input == "q" {
             println!("Quitting...");
@@ -274,7 +278,7 @@ pub fn valid_log(loc : &str) -> bool {
 }
 
 /// Checks if Nginx log has valid format
-pub fn valid_archive(loc : &str) -> bool {
+pub fn valid_archive(loc: &str) -> bool {
     let loc2 = beautify_path(loc.to_string());
     if Path::new(loc2.as_str()).exists() == false {
         print!(" The path does not exist");
@@ -305,20 +309,21 @@ pub fn valid_archive(loc : &str) -> bool {
 
 /// Server, containing protocol, hostname, port and db
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Logger{
-    ip : String,
-    alt_ip : Option<String>,
+pub struct Logger {
+    ip: String,
+    alt_ip: Option<String>,
     host: Option<String>,
-    request : String,
-    refer : Option<String>,
-    status_code : u16,
+    request: String,
+    refer: Option<String>,
+    status_code: u16,
     size: u32,
     user_agent: Option<String>,
-    time: u32 // Who knows if this program lives to be 83 years old
+    time: u32, // Who knows if this program lives to be 83 years old
 }
-impl Logger{
-    pub fn new(line : String) -> Option<Self> {
-        let re = Regex::new(r#"(.*) .* .* \[(.*)\] "(.*)" "(.*)" (\d+) (\d+) "(.*)" "(.*)""#).ok()?;
+impl Logger {
+    pub fn new(line: String) -> Option<Self> {
+        let re =
+            Regex::new(r#"(.*) .* .* \[(.*)\] "(.*)" "(.*)" (\d+) (\d+) "(.*)" "(.*)""#).ok()?;
         if re.is_match(line.as_str()) == false {
             return None;
         }
@@ -329,7 +334,7 @@ impl Logger{
 
         // Getting ip(s)
         let mut ip = &cap[1];
-        let mut alt_ip : Option<String> = None;
+        let mut alt_ip: Option<String> = None;
         if ip.contains(",") {
             let split: Vec<&str> = ip.split(",").collect();
             ip = split[0].trim();
@@ -337,11 +342,14 @@ impl Logger{
         }
 
         // verify ip addresses
-        if !ip.parse::<Ipv4Addr>().is_ok() && !ip.parse::<Ipv6Addr>().is_ok(){
+        if !ip.parse::<Ipv4Addr>().is_ok() && !ip.parse::<Ipv6Addr>().is_ok() {
             println!("Not an ip :P");
             return None;
         }
-        if !alt_ip.is_none() && !alt_ip.as_ref().unwrap().parse::<Ipv4Addr>().is_ok() && !alt_ip.as_ref().unwrap().parse::<Ipv6Addr>().is_ok(){
+        if !alt_ip.is_none()
+            && !alt_ip.as_ref().unwrap().parse::<Ipv4Addr>().is_ok()
+            && !alt_ip.as_ref().unwrap().parse::<Ipv6Addr>().is_ok()
+        {
             alt_ip = None;
         }
 
@@ -352,7 +360,7 @@ impl Logger{
         }
 
         // Getting the domain
-        let mut host : Option<String> = None;
+        let mut host: Option<String> = None;
         if &cap[3] != "-" {
             host = Some(String::from(&cap[3]));
         }
@@ -368,11 +376,11 @@ impl Logger{
             return None;
         }
         let size = size_res.clone().unwrap();
-        let mut refer : Option<String> = None;
+        let mut refer: Option<String> = None;
         if &cap[7] != "-" {
             refer = Some(String::from(&cap[7]));
         }
-        let mut user_agent : Option<String> = None;
+        let mut user_agent: Option<String> = None;
         if &cap[8] != "-" {
             user_agent = Some(String::from(&cap[8]));
         }
@@ -386,12 +394,17 @@ impl Logger{
             status_code,
             size,
             user_agent,
-            time
+            time,
         })
     }
 
-    pub fn from_es(es : Value) -> Option<Self> {
-        if es.get("ip").is_none() || es.get("request").is_none() || es.get("status_code").is_none() || es.get("time").is_none() || es.get("size").is_none() {
+    pub fn from_es(es: Value) -> Option<Self> {
+        if es.get("ip").is_none()
+            || es.get("request").is_none()
+            || es.get("status_code").is_none()
+            || es.get("time").is_none()
+            || es.get("size").is_none()
+        {
             return None;
         }
 
@@ -436,7 +449,7 @@ impl Logger{
             status_code,
             size,
             user_agent,
-            time
+            time,
         })
     }
 
@@ -452,14 +465,14 @@ impl Logger{
             status_code: 200,
             size: 420,
             user_agent: None,
-            time: 0
+            time: 0,
         }
     }
 
     /// This function is to check if the author of this application has matching mapping
-    pub fn double_check_mapping() -> bool{
+    pub fn double_check_mapping() -> bool {
         let logger = Self::dummy_data();
-        let mapping : Mapping = Mapping::new();
+        let mapping: Mapping = Mapping::new();
         let keys = serde_json::to_value(mapping.mappings.properties)
             .unwrap()
             .as_object()
@@ -485,21 +498,23 @@ impl Logger{
         true
     }
 
-    pub async fn valid_mapping(db: String, res : Response) -> bool{
+    pub async fn valid_mapping(db: String, res: Response) -> bool {
         if Logger::double_check_mapping() == false {
             return false;
         }
-        let j : Value = res.json().await.expect("Expected valid JSON");
+        let j: Value = res.json().await.expect("Expected valid JSON");
         if j[db.clone()]["mappings"]["properties"].is_null() {
             return false;
         }
-        if j[db.clone()]["mappings"]["properties"].as_object().is_some() == false {
+        if j[db.clone()]["mappings"]["properties"]
+            .as_object()
+            .is_some()
+            == false
+        {
             return false;
         }
-        let keys = j[db]["mappings"]["properties"]
-            .as_object()
-            .unwrap();
-        let mapping : Mapping = Mapping::new();
+        let keys = j[db]["mappings"]["properties"].as_object().unwrap();
+        let mapping: Mapping = Mapping::new();
         let keys2 = serde_json::to_value(mapping.mappings.properties)
             .unwrap()
             .as_object()
@@ -507,13 +522,13 @@ impl Logger{
             .clone();
 
         for elm in keys.keys() {
-            if keys2.contains_key(elm) == false{
+            if keys2.contains_key(elm) == false {
                 print!(" Should not contain: {}", elm);
                 return false;
             }
         }
         for elm in keys2.keys() {
-            if keys.contains_key(elm) == false{
+            if keys.contains_key(elm) == false {
                 print!(" DB does not contain: {}", elm);
                 return false;
             }
@@ -521,21 +536,25 @@ impl Logger{
         true
     }
 
-    pub async fn create_mapping(server : Server) -> Option<bool> {
+    pub async fn create_mapping(server: Server) -> Option<bool> {
         if Logger::double_check_mapping() == false {
             return None;
         }
-        let mapping : Mapping = Mapping::new();
+        let mapping: Mapping = Mapping::new();
         let request = reqwest::Client::new()
             .put(server.get_url())
             .json(&mapping)
             .send()
-            .await.ok()?
+            .await
+            .ok()?
             .text()
-            .await.ok()?;
+            .await
+            .ok()?;
 
-        let res : Value = serde_json::from_str(request.as_str()).unwrap();
-        if res["acknowledged"].is_boolean() == false || res["acknowledged"].as_bool().unwrap() == false {
+        let res: Value = serde_json::from_str(request.as_str()).unwrap();
+        if res["acknowledged"].is_boolean() == false
+            || res["acknowledged"].as_bool().unwrap() == false
+        {
             print!("[X] {}", request);
             return None;
         }
@@ -553,33 +572,33 @@ impl Logger{
         format!("{:X}", hasher.finalize())
     }
 }
-impl Clone for Logger{
+impl Clone for Logger {
     fn clone(&self) -> Logger {
-        let alt_ip : Option<String>;
+        let alt_ip: Option<String>;
         if self.alt_ip.is_none() {
             alt_ip = None;
-        }else{
+        } else {
             alt_ip = Option::from(self.alt_ip.as_ref().unwrap().clone())
         }
 
-        let host : Option<String>;
+        let host: Option<String>;
         if self.alt_ip.is_none() {
             host = None;
-        }else{
+        } else {
             host = Option::from(self.host.as_ref().unwrap().clone())
         }
 
-        let refer : Option<String>;
+        let refer: Option<String>;
         if self.refer.is_none() {
             refer = None;
-        }else{
+        } else {
             refer = Option::from(self.refer.as_ref().unwrap().clone())
         }
 
-        let user_agent : Option<String>;
+        let user_agent: Option<String>;
         if self.user_agent.is_none() {
             user_agent = None;
-        }else{
+        } else {
             user_agent = Option::from(self.user_agent.as_ref().unwrap().clone())
         }
 
@@ -592,26 +611,43 @@ impl Clone for Logger{
             status_code: self.status_code.clone(),
             size: self.size.clone(),
             user_agent,
-            time: self.time.clone()
+            time: self.time.clone(),
         }
     }
 }
 
-
-impl fmt::Display for Logger{
+impl fmt::Display for Logger {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let ip = &self.ip;
-        let alt_ip : String = if self.alt_ip.is_none() { "None".to_string() } else { self.alt_ip.as_ref().unwrap().to_string() };
-        let host : String = if self.host.is_none() { "None".to_string() } else { self.host.as_ref().unwrap().to_string() };
-        let size : String = self.size.to_string();
-        let status_code : String = self.status_code.to_string();
-        let request : String = self.request.clone();
-        let refer : String = if self.refer.is_none() { "None".to_string() } else { self.refer.as_ref().unwrap().to_string() };
-        let user_agent : String = if self.user_agent.is_none() { "None".to_string() } else { self.user_agent.as_ref().unwrap().to_string() };
+        let alt_ip: String = if self.alt_ip.is_none() {
+            "None".to_string()
+        } else {
+            self.alt_ip.as_ref().unwrap().to_string()
+        };
+        let host: String = if self.host.is_none() {
+            "None".to_string()
+        } else {
+            self.host.as_ref().unwrap().to_string()
+        };
+        let size: String = self.size.to_string();
+        let status_code: String = self.status_code.to_string();
+        let request: String = self.request.clone();
+        let refer: String = if self.refer.is_none() {
+            "None".to_string()
+        } else {
+            self.refer.as_ref().unwrap().to_string()
+        };
+        let user_agent: String = if self.user_agent.is_none() {
+            "None".to_string()
+        } else {
+            self.user_agent.as_ref().unwrap().to_string()
+        };
         let time = epoch_to_datetime(self.time as i64);
 
-        let line = format!("{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", time, ip, alt_ip, host, status_code, request, refer, user_agent, size);
+        let line = format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            time, ip, alt_ip, host, status_code, request, refer, user_agent, size
+        );
         write!(f, "{}", line)
     }
 }
-

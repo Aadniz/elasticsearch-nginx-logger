@@ -1,5 +1,7 @@
 # elasticsearch-nginx-logger
 
+*My first project in rust ever*
+
 An application to actively monitor access.log and bulk them to elasticsearch
 
 ![screenshot](./screenshots/Screenshot_2022-09-18_09:12:55.png "Checking process")

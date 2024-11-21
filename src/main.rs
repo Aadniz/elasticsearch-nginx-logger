@@ -1,69 +1,67 @@
-use std::{env, thread, sync::Arc, sync::Mutex};
-use std::io::{stdout, Write};
-use std::path::Path;
 use chrono::{Local, NaiveTime};
 use colored::Colorize;
 use logwatcher::{LogWatcher, LogWatcherAction};
+use std::io::{stdout, Write};
+use std::path::Path;
+use std::{env, sync::Arc, sync::Mutex, thread};
 
 // headers
-pub mod server;
 mod logger;
+pub mod server;
 
-use server::Server;
-use crate::logger::{Logger, valid_log, valid_archive, beautify_path};
+use crate::logger::{beautify_path, valid_archive, valid_log, Logger};
 use crate::server::*;
+use server::Server;
 
-fn epoch_days_ago(days : i64) -> i64{
+fn epoch_days_ago(days: i64) -> i64 {
     let time = Local::now() + chrono::Duration::days(-days);
-    let epoch = time.date().and_time(NaiveTime::from_num_seconds_from_midnight(0,0)).unwrap().timestamp();
+    let epoch = time
+        .date()
+        .and_time(NaiveTime::from_num_seconds_from_midnight(0, 0))
+        .unwrap()
+        .timestamp();
     return epoch;
 }
 
+// Default values
+const BULK_SIZE: u16 = 500;
+//const ARCHIVE_TIME: u16 = 30; // Days
+const ARCHIVE_TIME: u16 = 30; // Days
 
 fn main() {
-
     #[allow(non_snake_case)]
-    // Default values
-    let BULK_SIZE = 500;
-    //let ARCHIVE_TIME = 30; // Days
-    let ARCHIVE_TIME = 30; // Days
     let mut archive_enable = true;
 
     let args: Vec<String> = env::args().collect();
 
     // Possible default servers
     // First priority from top to bottom
-    let mut servers : Vec<Server> = vec![
+    let mut servers: Vec<Server> = vec![
         Server::new("http://127.0.0.1:9200/logger"),
-        Server::new("http://192.168.1.137:9200/logger")
+        Server::new("http://192.168.1.137:9200/logger"),
     ];
 
     // Possible default locations
     // First priority from top to bottom
-    let mut locations : Vec<&str> = vec![
-        "/var/log/nginx/access.log",
-        "/tmp/test.log"
-    ];
+    let mut locations: Vec<&str> = vec!["/var/log/nginx/access.log", "/tmp/test.log"];
 
     // Possible default archiving locations
     // First priority from top to bottom
-    let mut archiving : Vec<&str> = vec![
+    let mut archiving: Vec<&str> = vec![
         "/mnt/incognito/var/log/nginx",
-        "/mnt/incognito/var/log/***REMOVED***-log"
+        "/mnt/incognito/var/log/***REMOVED***-log",
     ];
 
     // Iterate arguments, skip executable
     let mut new_locations: Vec<&str> = vec![];
     let mut new_servers: Vec<Server> = vec![];
     let mut new_archiving: Vec<&str> = vec![];
-    for arg in &args[1..]{
+    for arg in &args[1..] {
         if Path::new(arg).is_dir() {
             new_archiving.push(arg);
-        }
-        else if Path::new(arg).exists() {
+        } else if Path::new(arg).exists() {
             new_locations.push(arg);
-        }
-        else if server::is_url(String::from(arg)){
+        } else if server::is_url(String::from(arg)) {
             new_servers.push(Server::new(arg));
         }
     }
@@ -83,19 +81,26 @@ fn main() {
     archiving.extend(new_archiving);
     archiving.reverse();
 
-
     // Choosing a file path
-    let mut location : String = String::from("");
-    println!("Checking file location ({}: {}, {}: {}, {}: {}): ", "✓".green(), "chosen".green(), "-".yellow(), "skip".yellow(), "X".red(), "Not found".red());
+    let mut location: String = String::from("");
+    println!(
+        "Checking file location ({}: {}, {}: {}, {}: {}): ",
+        "✓".green(),
+        "chosen".green(),
+        "-".yellow(),
+        "skip".yellow(),
+        "X".red(),
+        "Not found".red()
+    );
     for loc in &locations {
         print!("[ ] {} ...", loc);
         stdout().flush().unwrap();
         if !location.is_empty() && Path::new(loc).exists() {
             print!("{}", "\r[-]\n".yellow());
-        }else if valid_log(loc) {
+        } else if valid_log(loc) {
             print!("{}", "\r[✓]\n".green());
             location = String::from(*loc);
-        }else{
+        } else {
             print!("{}", "\r[X]\n".red());
         }
     }
@@ -106,8 +111,16 @@ fn main() {
     println!();
 
     // Choosing a server
-    let mut _server : Option<Server> = None;
-    println!("Checking Servers ({}: {}, {}: {}, {}: {}): ", "✓".green(), "chosen".green(), "-".yellow(), "skip".yellow(), "X".red(), "Failed".red());
+    let mut _server: Option<Server> = None;
+    println!(
+        "Checking Servers ({}: {}, {}: {}, {}: {}): ",
+        "✓".green(),
+        "chosen".green(),
+        "-".yellow(),
+        "skip".yellow(),
+        "X".red(),
+        "Failed".red()
+    );
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -129,7 +142,7 @@ fn main() {
             println!();
         });
 
-    if _server.is_some() == false{
+    if _server.is_some() == false {
         println!("{}", "No server found to log data to".red());
         std::process::exit(1);
     }
@@ -137,16 +150,24 @@ fn main() {
 
     // Choosing an archiving path
     let mut archive: String = String::from("");
-    println!("Checking archiving output directory ({}: {}, {}: {}, {}: {}): ", "✓".green(), "chosen".green(), "-".yellow(), "skip".yellow(), "X".red(), "Not found".red());
+    println!(
+        "Checking archiving output directory ({}: {}, {}: {}, {}: {}): ",
+        "✓".green(),
+        "chosen".green(),
+        "-".yellow(),
+        "skip".yellow(),
+        "X".red(),
+        "Not found".red()
+    );
     for loc in &archiving {
         print!("[ ] {} ...", loc);
         stdout().flush().unwrap();
         if !archive.is_empty() && Path::new(loc).exists() {
             print!("{}", "\r[-]\n".yellow());
-        }else if valid_archive(loc) {
+        } else if valid_archive(loc) {
             print!("{}", "\r[✓]\n".green());
             archive = beautify_path(String::from(*loc));
-        }else{
+        } else {
             print!("{}", "\r[-]\n".yellow());
         }
     }
@@ -157,18 +178,17 @@ fn main() {
     }
     println!();
 
-
     // And then for the actual logging
     let mut log_watcher = LogWatcher::register(location).unwrap();
     let mut counter = 0;
-    let mut log : Vec<Logger> = vec![];
+    let mut log: Vec<Logger> = vec![];
     let run = Arc::new(Mutex::new(false));
 
-    // Get time epoch since midnight 30 days ago 
-    let mut epoch = epoch_days_ago(ARCHIVE_TIME);
+    // Get time epoch since midnight 30 days ago
+    let mut epoch = epoch_days_ago(ARCHIVE_TIME.into());
 
     log_watcher.watch(&mut move |line: String| {
-        let logger : Option<Logger> = Logger::new(line.clone());
+        let logger: Option<Logger> = Logger::new(line.clone());
         if logger.is_none() {
             println!("Failed? {}", line);
             return LogWatcherAction::None;
@@ -181,8 +201,8 @@ fn main() {
             // Check if new day and archiving is not happening
             let run1 = Arc::clone(&run);
             let mut running = run1.lock().unwrap();
-            if epoch != epoch_days_ago(ARCHIVE_TIME) && !*running && archive_enable {
-                epoch = epoch_days_ago(ARCHIVE_TIME);
+            if epoch != epoch_days_ago(ARCHIVE_TIME.into()) && !*running && archive_enable {
+                epoch = epoch_days_ago(ARCHIVE_TIME.into());
                 *running = true;
                 let mut count = 0;
                 println!("Checking ARCHIVE_TIME");
@@ -206,8 +226,11 @@ fn main() {
                         let mut running = run2.lock().unwrap();
                         *running = false;
                     });
-                }else{
-                    println!("Nothing to archive. No documents older than {} days.", ARCHIVE_TIME);
+                } else {
+                    println!(
+                        "Nothing to archive. No documents older than {} days.",
+                        ARCHIVE_TIME
+                    );
                     *running = false;
                 }
             }
