@@ -36,10 +36,7 @@ fn main() {
 
     // Possible default servers
     // First priority from top to bottom
-    let mut servers: Vec<Server> = vec![
-        Server::new("http://127.0.0.1:9200/logger"),
-        Server::new("http://192.168.1.137:9200/logger"),
-    ];
+    let mut servers: Vec<Server> = vec![Server::new("http://127.0.0.1:9200/logger")];
 
     // Possible default locations
     // First priority from top to bottom
@@ -47,10 +44,11 @@ fn main() {
 
     // Possible default archiving locations
     // First priority from top to bottom
-    let mut archiving: Vec<&str> = vec![
-        "/mnt/incognito/var/log/nginx",
-        "/mnt/incognito/var/log/example-log",
-    ];
+    let mut archiving: Vec<&str> = vec!["/var/log/nginx", "/tmp", "/root"];
+
+    // Possible default archiving locations
+    // First priority from top to bottom
+    let mut archive_file_prefix: &str = "nginx";
 
     // Iterate arguments, skip executable
     let mut new_locations: Vec<&str> = vec![];
@@ -58,11 +56,16 @@ fn main() {
     let mut new_archiving: Vec<&str> = vec![];
     for arg in &args[1..] {
         if Path::new(arg).is_dir() {
+            // specifying a directory sets it to the archiving directory
             new_archiving.push(arg);
         } else if Path::new(arg).exists() {
+            // specifying a file sets the file we are reading from
             new_locations.push(arg);
         } else if server::is_url(String::from(arg)) {
+            // specifying the url sets the elasticsearch url
             new_servers.push(Server::new(arg));
+        } else {
+            archive_file_prefix = arg;
         }
     }
 
@@ -149,7 +152,7 @@ fn main() {
     let server = _server.unwrap();
 
     // Choosing an archiving path
-    let mut archive: String = String::from("");
+    let mut archive_path: String = String::from("");
     println!(
         "Checking archiving output directory ({}: {}, {}: {}, {}: {}): ",
         "✓".green(),
@@ -162,16 +165,16 @@ fn main() {
     for loc in &archiving {
         print!("[ ] {} ...", loc);
         stdout().flush().unwrap();
-        if !archive.is_empty() && Path::new(loc).exists() {
+        if !archive_path.is_empty() && Path::new(loc).exists() {
             print!("{}", "\r[-]\n".yellow());
         } else if valid_archive(loc) {
             print!("{}", "\r[✓]\n".green());
-            archive = beautify_path(String::from(*loc));
+            archive_path = beautify_path(String::from(*loc));
         } else {
             print!("{}", "\r[-]\n".yellow());
         }
     }
-    if archive.is_empty() {
+    if archive_path.is_empty() {
         println!("{}", "No archiving directory found to log data to".yellow());
         println!("{}", "No archiving will be done".yellow());
         archive_enable = false;
@@ -215,20 +218,21 @@ fn main() {
                     });
 
                 if count > 0 {
-                    println!("Documents to archive: {}", count);
+                    println!("Documents to archive_path: {}", count);
 
                     // Setting up variables to be sent to thread
                     let server2 = server.clone();
                     let run2 = Arc::clone(&run);
-                    let archive = archive.clone();
+                    let archive_path = archive_path.clone();
+                    let archive_file_name = archive_file_prefix.to_string();
                     thread::spawn(move || {
-                        server2.archive(archive, epoch);
+                        server2.archive(archive_path, archive_file_name, epoch);
                         let mut running = run2.lock().unwrap();
                         *running = false;
                     });
                 } else {
                     println!(
-                        "Nothing to archive. No documents older than {} days.",
+                        "Nothing to archive_path. No documents older than {} days.",
                         ARCHIVE_TIME
                     );
                     *running = false;

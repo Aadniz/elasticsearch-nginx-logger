@@ -274,7 +274,7 @@ impl Server {
     }
 
     /// This function archives all documents before epoch time to an archive directory
-    pub fn archive(&self, path: String, epoch: i64) {
+    pub fn archive(&self, path: String, file_name: String, epoch: i64) {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -290,7 +290,7 @@ impl Server {
                     return;
                 }
 
-                let file_name = format!("example-{}.log.zz", epoch_to_date(epoch));
+                let file_name = format!("{}-{}.log.zz", file_name, epoch_to_date(epoch));
                 let full_path = format!("{}{}", path, file_name);
                 let mut e = ZlibEncoder::new(Vec::new(), Compression::best());
                 print!("Running");
