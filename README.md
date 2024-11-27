@@ -1,6 +1,6 @@
-# elasticsearch-nginx-logger
-
 *My first project in rust ever*
+
+# elasticsearch-nginx-logger
 
 An application to actively monitor access.log and bulk them to elasticsearch
 
@@ -8,17 +8,19 @@ An application to actively monitor access.log and bulk them to elasticsearch
 
 ### Basic usage
 ```bash
-$ rust-logger [access.log file(s)] [database(s)] 
+$ rust-logger [access.log file(s)] [database(s)] [archive directory] [archive filename]
 ```
 **Example**
 ```bash
-$ rust-logger /var/log/nging/access.log http://127.0.0.1:9200/logger
+$ rust-logger /var/log/nginx/access.log http://127.0.0.1:9200/logger /var/log/archives archive
 ```
-It doesn't matter what order the arguments are provided. Just if it's a path, and a HTTP server address.
+It doesn't matter what order the arguments are provided. If the argument is a path to a file, it will interperate that as the log file to read. If the argument is a folder, it will become the archive directory. If the argument is an URL, it will be the database url. If it's none of these, it will become the archive prefix name.
 
 If none are provided, rust-logger will try some default paths and servers. These are:
 
 `http://127.0.0.1:9200/logger` and `/var/log/nginx/access.log`
+
+And archive to default location `/var/log/nginx/nginx-YYYY-MM-DD.log.zz`
 
 ---
 
