@@ -114,7 +114,7 @@ fn main() {
     println!();
 
     // Choosing a server
-    let mut _server: Option<Server> = None;
+    let mut server: Option<Server> = None;
     println!(
         "Checking Servers ({}: {}, {}: {}, {}: {}): ",
         "✓".green(),
@@ -132,12 +132,12 @@ fn main() {
             for ser in servers {
                 print!("[ ] {} ...", ser);
                 stdout().flush().unwrap();
-                if _server.is_some() {
+                if server.is_some() {
                     print!("{}", " (Not bothering checking)".yellow());
                     print!("{}", "\r[-]\n".yellow());
                 } else if db_exists(ser.clone()).await {
                     print!("{}", "\r[✓]\n".green());
-                    _server = Some(ser.clone());
+                    server = Some(ser.clone());
                 } else {
                     print!("{}", "\r[X]\n".red());
                 }
@@ -145,11 +145,12 @@ fn main() {
             println!();
         });
 
-    if _server.is_some() == false {
+    let server: Server = if let Some(s) = server {
+        s
+    } else {
         println!("{}", "No server found to log data to".red());
         std::process::exit(1);
-    }
-    let server = _server.unwrap();
+    };
 
     // Choosing an archiving path
     let mut archive_path: String = String::from("");
@@ -178,6 +179,18 @@ fn main() {
         println!("{}", "No archiving directory found to log data to".yellow());
         println!("{}", "No archiving will be done".yellow());
         archive_enable = false;
+    }
+    println!();
+
+    if archive_enable {
+        println!("Archive file prefix:");
+        println!(
+            "{} {} ({}{}-YYYY-MM-DD.log.zz)",
+            "[✓]".green(),
+            archive_file_prefix,
+            archive_path,
+            archive_file_prefix
+        )
     }
     println!();
 
@@ -218,15 +231,15 @@ fn main() {
                     });
 
                 if count > 0 {
-                    println!("Documents to archive_path: {}", count);
+                    println!("Documents to archive: {}", count);
 
                     // Setting up variables to be sent to thread
-                    let server2 = server.clone();
+                    let server = server.clone();
                     let run2 = Arc::clone(&run);
                     let archive_path = archive_path.clone();
                     let archive_file_name = archive_file_prefix.to_string();
                     thread::spawn(move || {
-                        server2.archive(archive_path, archive_file_name, epoch);
+                        server.archive(archive_path, archive_file_name, epoch);
                         let mut running = run2.lock().unwrap();
                         *running = false;
                     });

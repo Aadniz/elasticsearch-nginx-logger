@@ -394,10 +394,11 @@ impl Server {
                     if last_run {
                         let compressed_bytes = e.finish();
 
-                        let mut output = File::create(full_path).unwrap();
+                        let mut output = File::create(full_path.clone()).unwrap();
                         output.write_all(&compressed_bytes.unwrap()).unwrap();
 
-                        println!("Done Archiving");
+                        println!("Saved archive: {}", full_path);
+                        println!("Deleting {} documents...", total);
                         self.delete_before(epoch).await;
                         break;
                     }
@@ -430,7 +431,7 @@ impl Server {
             return;
         }
 
-        let _response = self
+        let response = self
             .client
             .bulk(BulkParts::Index(self.db.as_str()))
             .body(body)
@@ -438,12 +439,12 @@ impl Server {
             .send()
             .await;
 
-        if !_response.is_ok() {
+        if !response.is_ok() {
             println!("{}", "Failed to create bulk".red());
             return;
         }
 
-        let response = _response.unwrap().json::<Value>().await;
+        let response = response.unwrap().json::<Value>().await;
 
         if !response.is_ok() {
             println!("{}", "Responded with a non-ok message!".red());
@@ -457,13 +458,13 @@ impl Server {
             println!("{}", "Bulk had errors!".red());
         }
 
-        let _items = response_body["items"].as_array();
-        if _items.is_none() {
+        let items = response_body["items"].as_array();
+        if items.is_none() {
             println!("{}", "Indexed 0 documents??".red());
             return;
         }
         let mut counter = 0;
-        for item in _items.unwrap() {
+        for item in items.unwrap() {
             if item.get("index").is_none() {
                 continue;
             }
