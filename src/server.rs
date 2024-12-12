@@ -1,16 +1,19 @@
+use anyhow::{bail, Error, Result};
 use chrono::{NaiveDate, TimeZone, Utc};
 use colored::Colorize;
+use elasticsearch::auth::Credentials;
+use elasticsearch::cert::CertificateValidation;
 use elasticsearch::http::request::JsonBody;
-use elasticsearch::http::transport::Transport;
+use elasticsearch::http::transport::{SingleNodeConnectionPool, TransportBuilder};
 use elasticsearch::{BulkParts, CountParts, DeleteByQueryParts, Elasticsearch, SearchParts};
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use regex::Regex;
-use reqwest;
 use reqwest::Client;
-use serde_json::{json, Result, Value};
+use reqwest::{self, Url};
+use serde_json::{json, Value};
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::time::Duration;
 use std::{fmt, io, thread, time};
 
@@ -35,22 +38,32 @@ fn epoch_to_date(epoch: i64) -> NaiveDate {
 }
 
 /// Checks if the server is an elasticsearch server
-pub async fn is_es(ser: Server) -> bool {
+pub async fn is_es(ser: Server) -> Result<(), Error> {
     let indexes = ["name", "cluster_name", "cluster_uuid", "version", "tagline"];
 
+    let mut buf = Vec::new();
+    File::open("/etc/elasticsearch/certs/http_ca.crt")?.read_to_end(&mut buf)?;
+    let certs = reqwest::Certificate::from_pem(&buf)?;
+
     let url = format!("{}://{}:{}", ser.protocol, ser.hostname, ser.port);
-    if is_up(url.clone()).await == false {
-        return false;
-    }
+    is_up(url.clone()).await?;
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(16))
+        .add_root_certificate(certs)
         .build()
         .unwrap();
-    let response = client.get(url.as_str()).send().await;
-    let text = response.unwrap().text().await;
+    let response = if let (Some(u), Some(p)) = (ser.username, ser.password) {
+        client
+            .get(url.as_str())
+            .basic_auth(u, Some(p))
+            .send()
+            .await?
+    } else {
+        client.get(url.as_str()).send().await?
+    };
+    let text = response.text().await;
     if is_json(text.as_ref().unwrap().as_str()).is_ok() == false {
-        print!("{}", " (Response is not json)".red());
-        return false;
+        bail!("Response is not json");
     }
     let res: Value = serde_json::from_str(text.unwrap().as_str()).unwrap();
     let mut fails @ mut count = 0;
@@ -62,40 +75,45 @@ pub async fn is_es(ser: Server) -> bool {
     }
     let success_rate = (count - fails) as f64 / count as f64;
     if 0.75 > success_rate {
-        print!("{}", " (This does not look like an Elasticsearch DB)".red());
-        return false;
+        bail!("This does not look like an Elasticsearch DB");
     }
-    true
+    Ok(())
 }
 
 /// Checks if Elasticsearch database exists
-pub async fn db_exists(ser: Server) -> bool {
-    if ser.db == "" {
-        print!("{}", " (No db specified)".red());
-        return false;
+pub async fn db_exists(ser: Server) -> Result<(), Error> {
+    if ser.index == "" {
+        bail!("No index specified");
     }
-    if is_es(ser.clone()).await == false {
-        return false;
-    }
+    is_es(ser.clone()).await?;
     let url = format!(
         "{}://{}:{}/{}",
-        ser.protocol, ser.hostname, ser.port, ser.db
+        ser.protocol, ser.hostname, ser.port, ser.index
     );
+
+    let mut buf = Vec::new();
+    File::open("/etc/elasticsearch/certs/http_ca.crt")?.read_to_end(&mut buf)?;
+    let certs = reqwest::Certificate::from_pem(&buf)?;
+
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(16))
-        .build()
-        .unwrap();
-    let response = client.get(url.as_str()).send().await;
+        .add_root_certificate(certs)
+        .build()?;
+
+    let response = if let (Some(u), Some(p)) = (&ser.username, &ser.password) {
+        client.get(url.as_str()).basic_auth(u, Some(p)).send().await
+    } else {
+        client.get(url.as_str()).send().await
+    };
     let res = response.unwrap();
     if res.status() != reqwest::StatusCode::OK {
-        println!();
         println!(
-            "  Found elasticsearch database, but DB ({}) does not exist.",
-            ser.db
+            "  Found elasticsearch database, but index ({}) does not exist.",
+            ser.index
         );
         println!(
             "  Do you want to create {} at {}://{}:{} ?",
-            ser.db, ser.protocol, ser.hostname, ser.port
+            ser.index, ser.protocol, ser.hostname, ser.port
         );
         print!("({}/{}/{}) > ", "y".green(), "n".red(), "q".yellow());
         let _ = io::stdout().flush();
@@ -105,83 +123,100 @@ pub async fn db_exists(ser: Server) -> bool {
         user_input = String::from(user_input.trim());
         if user_input != "y" && user_input != "q" {
             // if n or something else
-            return false;
+            bail!("Cancelled due to user input");
         } else if user_input == "q" {
             println!("Quitting...");
             std::process::exit(0);
         } else if user_input == "y" {
-            if Logger::create_mapping(ser).await == None {
-                return false;
-            }
-            return true;
+            Logger::create_mapping(ser).await?;
+            return Ok(());
         }
-        return false;
+        bail!("Nothing happened");
     }
-    if Logger::valid_mapping(ser.db.clone(), res).await == false {
-        print!(
-            "{}",
-            " (Elasticsearch was found, but it has the incorrect mapping)".yellow()
-        );
-        return false;
-    }
-    true
+    Logger::valid_mapping(ser.index.clone(), res).await?;
+    Ok(())
 }
 
 /// Checks if host is reachable
-pub async fn is_up(str1: String) -> bool {
+pub async fn is_up(str1: String) -> Result<(), Error> {
     if is_url(str1.clone()) == false {
-        return false;
+        bail!("{} is not an url", str1);
     }
+    let mut buf = Vec::new();
+    File::open("/etc/elasticsearch/certs/http_ca.crt")?.read_to_end(&mut buf)?;
+    let certs = reqwest::Certificate::from_pem(&buf)?;
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(16))
+        .add_root_certificate(certs)
         .build()
         .unwrap();
-    let response = client.head(str1).send().await;
-    if response.is_ok() {
-        return true;
-    }
-    print!("{}", " (Port not open, or device is down)".red());
-    false
+    client.head(str1).send().await.unwrap();
+
+    Ok(())
 }
 
 /// Server, containing protocol, hostname, port and db
 pub struct Server {
     protocol: String,
+    username: Option<String>,
+    password: Option<String>,
     hostname: String,
     port: u16,
-    db: String,
+    index: String,
     client: Elasticsearch,
 }
+
 impl Server {
-    pub fn new(str: &str) -> Self {
-        let re =
-            Regex::new(r#"(http|https)://([^/ :]+):?([^/ ]*)/?(/?[^ #?]*)\x3f?([^ #]*)#?([^ ]*)"#)
-                .unwrap();
-        let cap = re.captures(str).expect("Expected valid url");
+    pub fn new(url: &str) -> Self {
+        let re = Regex::new(r#"^(?P<protocol>[a-z]+)://(?:(?P<username>[^:@]+)?(?::(?P<password>[^@]+))?@)?(?P<host>[^:/?#]+)(?::(?P<port>\d+))?(?:/)?(?P<path>[^?#]*)?(?:\?(?P<query>[^#]*))?(?:#(?P<fragment>.*))?$"#).unwrap();
+        let cap = re.captures(url).expect("Expected valid url");
 
-        let protocol = String::from(&cap[1]);
-        let hostname = String::from(&cap[2]);
-        let port = cap[3].parse::<u16>().unwrap_or(9200);
-        let db = String::from(&cap[4]);
+        let protocol = cap.name("protocol").unwrap().as_str().to_string();
+        let username = cap.name("username").map(|m| m.as_str().to_string());
+        let password = cap.name("password").map(|m| m.as_str().to_string());
+        let hostname = cap.name("host").unwrap().as_str().to_string();
+        let port = cap
+            .name("port")
+            .map_or(9200, |m| m.as_str().parse().unwrap());
+        let index = cap
+            .name("path")
+            .map_or("/".to_string(), |m| m.as_str().to_string());
 
-        let transport =
-            Transport::single_node(format!("{}://{}:{}", protocol, hostname, port).as_str());
-        let client = Elasticsearch::new(transport.unwrap());
+        let pool = SingleNodeConnectionPool::new(
+            Url::parse(&format!("{}://{}:{}", protocol, hostname, port)).unwrap(),
+        );
+        let mut transport =
+            TransportBuilder::new(pool).cert_validation(CertificateValidation::None);
+
+        if let (Some(u), Some(p)) = (username.clone(), password.clone()) {
+            transport = transport.auth(Credentials::Basic(u, p));
+        }
+
+        let client = Elasticsearch::new(transport.build().unwrap());
 
         Server {
             protocol,
+            username,
+            password,
             hostname,
             port,
-            db,
+            index,
             client,
         }
     }
 
     pub fn get_url(&self) -> String {
-        format!(
-            "{}://{}:{}/{}",
-            self.protocol, self.hostname, self.port, self.db
-        )
+        if let (Some(u), Some(p)) = (&self.username, &self.password) {
+            format!(
+                "{}://{}:{}@{}:{}/{}",
+                self.protocol, u, p, self.hostname, self.port, self.index
+            )
+        } else {
+            format!(
+                "{}://{}:{}/{}",
+                self.protocol, self.hostname, self.port, self.index
+            )
+        }
     }
     pub fn get_host(&self) -> String {
         format!("{}://{}:{}", self.protocol, self.hostname, self.port)
@@ -190,7 +225,7 @@ impl Server {
     pub async fn count_before(&self, epoch: i64) -> i64 {
         let search_response = self
             .client
-            .count(CountParts::Index(&[self.db.as_str()]))
+            .count(CountParts::Index(&[self.index.as_str()]))
             .body(json!({
                 "query": {
                     "bool": {
@@ -233,7 +268,7 @@ impl Server {
     async fn delete_before(&self, epoch: i64) {
         let delete_query = self
             .client
-            .delete_by_query(DeleteByQueryParts::Index(&[self.db.as_str()]))
+            .delete_by_query(DeleteByQueryParts::Index(&[self.index.as_str()]))
             .body(json!({
                 "query": {
                     "bool": {
@@ -302,7 +337,7 @@ impl Server {
                     let mut last_run = false;
                     let search_response = self
                         .client
-                        .search(SearchParts::Index(&[self.db.as_str()]))
+                        .search(SearchParts::Index(&[self.index.as_str()]))
                         .body(json!({
                             "from": 0,
                             "size": 500,
@@ -433,7 +468,7 @@ impl Server {
 
         let response = self
             .client
-            .bulk(BulkParts::Index(self.db.as_str()))
+            .bulk(BulkParts::Index(self.index.as_str()))
             .body(body)
             .request_timeout(Duration::from_secs(25))
             .send()

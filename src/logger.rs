@@ -1,3 +1,4 @@
+use anyhow::{bail, Context, Error, Result};
 use chrono::{DateTime, Local, TimeZone, Utc};
 use colored::Colorize;
 use regex::Regex;
@@ -470,7 +471,7 @@ impl Logger {
     }
 
     /// This function is to check if the author of this application has matching mapping
-    pub fn double_check_mapping() -> bool {
+    pub fn double_check_mapping() -> Result<(), Error> {
         let logger = Self::dummy_data();
         let mapping: Mapping = Mapping::new();
         let keys = serde_json::to_value(mapping.mappings.properties)
@@ -486,34 +487,28 @@ impl Logger {
 
         for elm in keys.iter() {
             if keys2.contains_key(elm.0) == false {
-                panic!("{} Does not exist in struct", elm.0)
+                bail!("{} Does not exist in struct", elm.0)
             }
         }
 
         for elm in keys2.iter() {
             if keys.contains_key(elm.0) == false {
-                panic!("{} Does not exist in mapping", elm.0)
+                bail!("{} Does not exist in mapping", elm.0)
             }
         }
-        true
+        Ok(())
     }
 
-    pub async fn valid_mapping(db: String, res: Response) -> bool {
-        if Logger::double_check_mapping() == false {
-            return false;
-        }
-        let j: Value = res.json().await.expect("Expected valid JSON");
-        if j[db.clone()]["mappings"]["properties"].is_null() {
-            return false;
-        }
-        if j[db.clone()]["mappings"]["properties"]
-            .as_object()
-            .is_some()
-            == false
-        {
-            return false;
-        }
-        let keys = j[db]["mappings"]["properties"].as_object().unwrap();
+    pub async fn valid_mapping(db: String, res: Response) -> anyhow::Result<(), anyhow::Error> {
+        Logger::double_check_mapping()?;
+
+        let j: Value = res.json().await?;
+        let keys = j
+            .get(db.clone())
+            .and_then(|db_json| db_json.get("mappings"))
+            .and_then(|mappings_json| mappings_json.get("properties"))
+            .and_then(|prop_json| prop_json.as_object())
+            .with_context(|| format!("Unable to find {}.mappings.properties", db))?;
         let mapping: Mapping = Mapping::new();
         let keys2 = serde_json::to_value(mapping.mappings.properties)
             .unwrap()
@@ -523,44 +518,36 @@ impl Logger {
 
         for elm in keys.keys() {
             if keys2.contains_key(elm) == false {
-                print!(" Should not contain: {}", elm);
-                return false;
+                bail!(" Should not contain: {}", elm);
             }
         }
         for elm in keys2.keys() {
             if keys.contains_key(elm) == false {
-                print!(" DB does not contain: {}", elm);
-                return false;
+                bail!(" DB does not contain: {}", elm);
             }
         }
-        true
+        Ok(())
     }
 
-    pub async fn create_mapping(server: Server) -> Option<bool> {
-        if Logger::double_check_mapping() == false {
-            return None;
-        }
+    pub async fn create_mapping(server: Server) -> Result<(), Error> {
+        Logger::double_check_mapping()?;
         let mapping: Mapping = Mapping::new();
         let request = reqwest::Client::new()
             .put(server.get_url())
             .json(&mapping)
             .send()
-            .await
-            .ok()?
+            .await?
             .text()
-            .await
-            .ok()?;
+            .await?;
 
         let res: Value = serde_json::from_str(request.as_str()).unwrap();
         if res["acknowledged"].is_boolean() == false
             || res["acknowledged"].as_bool().unwrap() == false
         {
-            print!("[X] {}", request);
-            return None;
+            bail!(request);
         }
 
-        print!("[ ] Created: {}", server);
-        Some(true)
+        Ok(())
     }
 
     /// This function will generate the id for the document

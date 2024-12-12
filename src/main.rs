@@ -135,11 +135,12 @@ fn main() {
                 if server.is_some() {
                     print!("{}", " (Not bothering checking)".yellow());
                     print!("{}", "\r[-]\n".yellow());
-                } else if db_exists(ser.clone()).await {
+                } else if let Err(e) = db_exists(ser.clone()).await {
+                    print!("{e}");
+                    print!("{}", "\r[X]\n".red());
+                } else {
                     print!("{}", "\r[✓]\n".green());
                     server = Some(ser.clone());
-                } else {
-                    print!("{}", "\r[X]\n".red());
                 }
             }
             println!();
