@@ -14,6 +14,7 @@ use reqwest::{self, Url};
 use serde_json::{json, Value};
 use std::fs::File;
 use std::io::{Read, Write};
+use std::path::Path;
 use std::time::Duration;
 use std::{fmt, io, thread, time};
 
@@ -77,63 +78,6 @@ pub async fn is_es(ser: Server) -> Result<(), Error> {
     if 0.75 > success_rate {
         bail!("This does not look like an Elasticsearch DB");
     }
-    Ok(())
-}
-
-/// Checks if Elasticsearch database exists
-pub async fn db_exists(ser: Server) -> Result<(), Error> {
-    if ser.index == "" {
-        bail!("No index specified");
-    }
-    is_es(ser.clone()).await?;
-    let url = format!(
-        "{}://{}:{}/{}",
-        ser.protocol, ser.hostname, ser.port, ser.index
-    );
-
-    let mut buf = Vec::new();
-    File::open("/etc/elasticsearch/certs/http_ca.crt")?.read_to_end(&mut buf)?;
-    let certs = reqwest::Certificate::from_pem(&buf)?;
-
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(16))
-        .add_root_certificate(certs)
-        .build()?;
-
-    let response = if let (Some(u), Some(p)) = (&ser.username, &ser.password) {
-        client.get(url.as_str()).basic_auth(u, Some(p)).send().await
-    } else {
-        client.get(url.as_str()).send().await
-    };
-    let res = response.unwrap();
-    if res.status() != reqwest::StatusCode::OK {
-        println!(
-            "  Found elasticsearch database, but index ({}) does not exist.",
-            ser.index
-        );
-        println!(
-            "  Do you want to create {} at {}://{}:{} ?",
-            ser.index, ser.protocol, ser.hostname, ser.port
-        );
-        print!("({}/{}/{}) > ", "y".green(), "n".red(), "q".yellow());
-        let _ = io::stdout().flush();
-        let mut user_input = String::new();
-        let stdin = io::stdin();
-        stdin.read_line(&mut user_input).expect("Expect input");
-        user_input = String::from(user_input.trim());
-        if user_input != "y" && user_input != "q" {
-            // if n or something else
-            bail!("Cancelled due to user input");
-        } else if user_input == "q" {
-            println!("Quitting...");
-            std::process::exit(0);
-        } else if user_input == "y" {
-            Logger::create_mapping(ser).await?;
-            return Ok(());
-        }
-        bail!("Nothing happened");
-    }
-    Logger::valid_mapping(ser.index.clone(), res).await?;
     Ok(())
 }
 
@@ -309,7 +253,14 @@ impl Server {
     }
 
     /// This function archives all documents before epoch time to an archive directory
-    pub fn archive(&self, path: String, file_name: String, epoch: i64) {
+    pub fn archive(&self, path: &Path, file_name: String, epoch: i64) -> Result<(), Error> {
+        let file_name = format!("{}-{}.log.zz", file_name, epoch_to_date(epoch));
+        let full_path = if let Some(p) = path.to_str() {
+            format!("{}{}", p, file_name)
+        } else {
+            bail!("Failed to convert path: `{:?}` to a string", path)
+        };
+
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -325,8 +276,6 @@ impl Server {
                     return;
                 }
 
-                let file_name = format!("{}-{}.log.zz", file_name, epoch_to_date(epoch));
-                let full_path = format!("{}{}", path, file_name);
                 let mut e = ZlibEncoder::new(Vec::new(), Compression::best());
                 print!("Running");
 
@@ -420,7 +369,7 @@ impl Server {
                         }
 
                         // Actually writing the line
-                        let log = Logger::from_es(item["_source"].to_owned()).unwrap();
+                        let log = Logger::from_es(&item["_source"]).unwrap();
                         let line = format!("{}\n", log);
                         e.write_all(line.as_bytes()).unwrap();
                     }
@@ -446,9 +395,11 @@ impl Server {
                     prev_now = now;
                 }
             });
+
+        Ok(())
     }
 
-    pub async fn bulk(&self, log: &Vec<Logger>) {
+    pub async fn bulk<'a>(&self, log: &Vec<Logger>) {
         let mut body: Vec<JsonBody<Value>> = vec![];
 
         let mut ids: Vec<String> = vec![];
@@ -517,6 +468,63 @@ impl Server {
             return;
         }
         println!("Successfully indexed {} documents", counter);
+    }
+
+    /// Checks if Elasticsearch database exists
+    pub async fn db_exists(&self) -> Result<(), Error> {
+        if self.index == "" {
+            bail!("No index specified");
+        }
+        is_es(self.clone()).await?;
+        let url = format!(
+            "{}://{}:{}/{}",
+            self.protocol, self.hostname, self.port, self.index
+        );
+
+        let mut buf = Vec::new();
+        File::open("/etc/elasticsearch/certs/http_ca.crt")?.read_to_end(&mut buf)?;
+        let certs = reqwest::Certificate::from_pem(&buf)?;
+
+        let client = Client::builder()
+            .connect_timeout(Duration::from_secs(16))
+            .add_root_certificate(certs)
+            .build()?;
+
+        let response = if let (Some(u), Some(p)) = (&self.username, &self.password) {
+            client.get(url.as_str()).basic_auth(u, Some(p)).send().await
+        } else {
+            client.get(url.as_str()).send().await
+        };
+        let res = response.unwrap();
+        if res.status() != reqwest::StatusCode::OK {
+            println!(
+                "  Found elasticsearch database, but index ({}) does not exist.",
+                self.index
+            );
+            println!(
+                "  Do you want to create {} at {}://{}:{} ?",
+                self.index, self.protocol, self.hostname, self.port
+            );
+            print!("({}/{}/{}) > ", "y".green(), "n".red(), "q".yellow());
+            let _ = io::stdout().flush();
+            let mut user_input = String::new();
+            let stdin = io::stdin();
+            stdin.read_line(&mut user_input).expect("Expect input");
+            user_input = String::from(user_input.trim());
+            if user_input != "y" && user_input != "q" {
+                // if n or something else
+                bail!("Cancelled due to user input");
+            } else if user_input == "q" {
+                println!("Quitting...");
+                std::process::exit(0);
+            } else if user_input == "y" {
+                Logger::create_mapping(self.clone()).await?;
+                return Ok(());
+            }
+            bail!("Nothing happened");
+        }
+        Logger::valid_mapping(self.index.clone(), res).await?;
+        Ok(())
     }
 }
 impl fmt::Display for Server {

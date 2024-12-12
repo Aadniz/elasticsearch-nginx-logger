@@ -1,20 +1,20 @@
 use anyhow::{bail, Context, Error, Result};
-use chrono::{DateTime, Local, TimeZone, Utc};
+use chrono::DateTime;
 use colored::Colorize;
 use regex::Regex;
 use reqwest::Response;
 use serde_json;
 use sha1::{Digest, Sha1};
-use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
 use std::{fmt, io};
 
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::utils::epoch_to_datetime;
 use crate::Server;
 
 ///
@@ -134,75 +134,6 @@ impl Mapping {
         }
     }
 }
-///
-///
-
-/// This function expects a string like this
-/// ```
-/// 17/Sep/2022:23:39:19 +0200
-/// ```
-fn date_to_epoch(str: &str) -> u32 {
-    let datetime = DateTime::parse_from_str(str, "%d/%b/%Y:%H:%M:%S %z");
-    if datetime.is_ok() == false {
-        return 0;
-    }
-
-    datetime.unwrap().timestamp() as u32
-}
-
-fn epoch_to_datetime(epoch: i64) -> String {
-    let naive = Local.timestamp(epoch, 0).naive_local();
-    let datetime = DateTime::<Utc>::from_local(naive, Utc);
-    let newdate = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
-    return newdate;
-}
-
-fn dir_write_permission(path: String) -> bool {
-    let file_path = format!("{}tmp.swp", path);
-
-    // Try creating a file, and then deleting it right afterwards
-    let file_res = File::create(file_path.clone());
-    if !file_res.is_ok() {
-        return false;
-    }
-
-    // Write a &str in the file (ignoring the result).
-    let res = writeln!(&mut file_res.unwrap(), ":)");
-    if !res.is_ok() {
-        return false;
-    }
-    res.unwrap();
-
-    fs::remove_file(file_path.clone()).expect(
-        format!(
-            "The program crashed, you need to go delete {} manually",
-            file_path
-        )
-        .as_str(),
-    );
-    true
-}
-
-/// Remove extra slashes in path
-/// From /home///chiya//something → /home/chiya/something/
-pub fn beautify_path(path: String) -> String {
-    let mut new_path: String = String::new();
-    let mut is_slash = false;
-    for (_, c) in path.chars().enumerate() {
-        if c == '/' && is_slash {
-            continue;
-        } else if c == '/' {
-            is_slash = true;
-        } else {
-            is_slash = false;
-        }
-        new_path.push(c);
-    }
-    if new_path.chars().last().unwrap() != '/' {
-        new_path.push('/');
-    }
-    return new_path;
-}
 
 /// Checks if Nginx log has valid format
 pub fn valid_log(loc: &str) -> bool {
@@ -229,14 +160,16 @@ pub fn valid_log(loc: &str) -> bool {
     let mut counter = 0;
     let mut fails = 0;
     for line in reader.lines() {
-        let result = Logger::new(line.unwrap().clone());
-        if counter > 10 {
-            break;
+        if let Ok(l) = line {
+            let result = Logger::new(l);
+            if counter > 10 {
+                break;
+            }
+            if result.is_err() {
+                fails += 1;
+            }
+            counter += 1;
         }
-        if result.is_none() {
-            fails += 1;
-        }
-        counter += 1;
     }
 
     let mut error = false;
@@ -278,119 +211,76 @@ pub fn valid_log(loc: &str) -> bool {
     true
 }
 
-/// Checks if Nginx log has valid format
-pub fn valid_archive(loc: &str) -> bool {
-    let loc2 = beautify_path(loc.to_string());
-    if Path::new(loc2.as_str()).exists() == false {
-        print!(" The path does not exist");
-        return false;
-    }
-
-    if Path::new(loc2.as_str()).is_dir() == false {
-        print!(" The path is not a directory");
-        return false;
-    }
-
-    // Check if write permissions in directory
-    //let md = fs::metadata(loc).unwrap();
-    //let permissions = md.permissions();
-    //if permissions.readonly() {
-    //    print!("The directory is not writable!");
-    //    return false;
-    //}
-    // いつから。。。 https://stackoverflow.com/questions/74129865/how-to-check-if-a-directory-has-write-permissions-in-rust/74130122
-    // Doing it the stupid way instead
-    if !dir_write_permission(loc2) {
-        print!(" Probably not write permission");
-        return false;
-    }
-
-    true
-}
-
 /// Server, containing protocol, hostname, port and db
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Logger {
-    ip: String,
-    alt_ip: Option<String>,
+    ip: IpAddr,
+    alt_ip: Option<IpAddr>,
     host: Option<String>,
     request: String,
     refer: Option<String>,
     status_code: u16,
-    size: u32,
+    size: u64,
     user_agent: Option<String>,
-    time: u32, // Who knows if this program lives to be 83 years old
+    time: u64, // Who knows if this program lives to be 83 years old
 }
 impl Logger {
-    pub fn new(line: String) -> Option<Self> {
-        let re =
-            Regex::new(r#"(.*) .* .* \[(.*)\] "(.*)" "(.*)" (\d+) (\d+) "(.*)" "(.*)""#).ok()?;
-        if re.is_match(line.as_str()) == false {
-            return None;
-        }
+    pub fn new(line: String) -> Result<Self, Error> {
+        let re = Regex::new(r#"(.*) .* .* \[(.*)\] "(.*)" "(.*)" (\d+) (\d+) "(.*)" "(.*)""#)?;
+        //if re.is_match(line.as_str()) == false {
+        //    bail!("Regex did not match line");
+        //}
 
         // 127.0.0.1, 84.213.100.23 - - [20/Jul/2022:22:12:47 +0200] "example.com" "GET /index.html HTTP/1.1" 403    153    "https://google.com/q=test" "Mozilla/5.0 (X11; Linux x86_64; rv:102.0) Gecko/20100101 Firefox/102.0"
         // cap[1]                        cap[2]                       cap[3]      cap[4]                    cap[5] cap[6]  cap[7]                      cap[8]
-        let cap = re.captures(line.as_str())?;
+        let cap = re
+            .captures(&line)
+            .context("Regex did not get any captures")?;
 
         // Getting ip(s)
-        let mut ip = &cap[1];
-        let mut alt_ip: Option<String> = None;
-        if ip.contains(",") {
-            let split: Vec<&str> = ip.split(",").collect();
-            ip = split[0].trim();
-            alt_ip = Some(String::from(split[1].trim()));
+        let mut ip_arg = &cap[1];
+        let mut alt_ip_arg: Option<String> = None;
+        if ip_arg.contains(",") {
+            let split: Vec<&str> = ip_arg.split(",").collect();
+            ip_arg = split[0].trim();
+            alt_ip_arg = Some(String::from(split[1].trim()));
         }
 
         // verify ip addresses
-        if !ip.parse::<Ipv4Addr>().is_ok() && !ip.parse::<Ipv6Addr>().is_ok() {
-            println!("Not an ip :P");
-            return None;
-        }
-        if !alt_ip.is_none()
-            && !alt_ip.as_ref().unwrap().parse::<Ipv4Addr>().is_ok()
-            && !alt_ip.as_ref().unwrap().parse::<Ipv6Addr>().is_ok()
-        {
-            alt_ip = None;
-        }
+        let ip: IpAddr = ip_arg.parse::<IpAddr>()?;
+        let alt_ip: Option<IpAddr> = alt_ip_arg.and_then(|ip| ip.parse::<IpAddr>().ok());
 
         // Getting the date
-        let time = date_to_epoch(&cap[2]);
-        if time == 0 {
-            return None;
-        }
+        // The format from nginx looks like this: 17/Sep/2022:23:39:19 +0200
+        // It will fail if it isn't this format
+        let time = DateTime::parse_from_str(&cap[2], "%d/%b/%Y:%H:%M:%S %z")?.timestamp() as u64;
 
         // Getting the domain
-        let mut host: Option<String> = None;
-        if &cap[3] != "-" {
-            host = Some(String::from(&cap[3]));
-        }
+        let host = if &cap[3] != "-" {
+            Some(cap[3].to_string())
+        } else {
+            None
+        };
 
-        let request = &cap[4];
-        let status_code_res = &cap[5].parse::<u16>();
-        if !status_code_res.is_ok() {
-            return None;
-        }
-        let status_code = status_code_res.clone().unwrap();
-        let size_res = &cap[6].parse::<u32>();
-        if !size_res.is_ok() {
-            return None;
-        }
-        let size = size_res.clone().unwrap();
-        let mut refer: Option<String> = None;
-        if &cap[7] != "-" {
-            refer = Some(String::from(&cap[7]));
-        }
-        let mut user_agent: Option<String> = None;
-        if &cap[8] != "-" {
-            user_agent = Some(String::from(&cap[8]));
-        }
+        let request = cap[4].to_string();
+        let status_code = (&cap[5]).parse::<u16>()?;
+        let size = (&cap[6]).parse::<u64>()?;
+        let refer = if &cap[7] != "-" {
+            Some(cap[7].to_string())
+        } else {
+            None
+        };
+        let user_agent = if &cap[8] != "-" {
+            Some(cap[8].to_string())
+        } else {
+            None
+        };
 
-        Some(Logger {
-            ip: String::from(ip),
+        Ok(Logger {
+            ip,
             host,
             alt_ip,
-            request: String::from(request),
+            request,
             refer,
             status_code,
             size,
@@ -399,48 +289,29 @@ impl Logger {
         })
     }
 
-    pub fn from_es(es: Value) -> Option<Self> {
-        if es.get("ip").is_none()
-            || es.get("request").is_none()
-            || es.get("status_code").is_none()
-            || es.get("time").is_none()
-            || es.get("size").is_none()
-        {
-            return None;
-        }
-
+    pub fn from_es(es: &Value) -> Option<Self> {
         // These values are required
-        let ip = es.get("ip").unwrap().as_str().unwrap().to_string();
-        let request = es.get("request").unwrap().as_str().unwrap().to_string();
-        let status_code = es.get("status_code").unwrap().as_u64().unwrap() as u16;
-        let time = es.get("time").unwrap().as_u64().unwrap() as u32;
-        let size = es.get("size").unwrap().as_u64().unwrap() as u32;
+        let ip: IpAddr = es.get("ip")?.as_str()?.parse().ok()?;
+        let request = es.get("request")?.as_str()?.to_string();
+        let status_code = es.get("status_code")?.as_u64()? as u16;
+        let time = es.get("time")?.as_u64()?;
+        let size = es.get("size")?.as_u64()?;
 
         // Option field for alt_ip
-        let mut alt_ip = None;
-        if !es.get("alt_ip").is_none() && !es.get("alt_ip").unwrap().is_null() {
-            alt_ip = Some(es.get("alt_ip").unwrap().as_str().unwrap().to_string());
-        }
+        let alt_ip: Option<IpAddr> = es
+            .get("alt_ip")
+            .and_then(|ai_j| ai_j.as_str())
+            .and_then(|ai_str| ai_str.parse().ok());
 
         // Option field for host
-        let mut host = None;
-        if !es.get("host").is_none() && !es.get("host").unwrap().is_null() {
-            host = Some(es.get("host").unwrap().as_str().unwrap().to_string());
-        }
+        let host = es.get("host").and_then(|s| Some(s.to_string()));
+
+        // Option field for refer
+        let refer = es.get("refer").and_then(|s| Some(s.to_string()));
 
         // Option field for user agent
-        let mut refer = None;
-        if !es.get("refer").is_none() && !es.get("refer").unwrap().is_null() {
-            refer = Some(es.get("refer").unwrap().as_str().unwrap().to_string());
-        }
+        let user_agent = es.get("user_agent").and_then(|s| Some(s.to_string()));
 
-        // Option field for user agent
-        let mut user_agent = None;
-        if !es.get("user_agent").is_none() && !es.get("user_agent").unwrap().is_null() {
-            user_agent = Some(es.get("user_agent").unwrap().as_str().unwrap().to_string());
-        }
-
-        // Delete this
         Some(Logger {
             ip,
             alt_ip,
@@ -458,10 +329,10 @@ impl Logger {
     /// use the new() function for actual new logging
     pub fn dummy_data() -> Self {
         Logger {
-            ip: "127.0.0.1".to_string(),
+            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             alt_ip: None,
             host: None,
-            request: "".to_string(),
+            request: String::new(),
             refer: None,
             status_code: 200,
             size: 420,
@@ -561,43 +432,15 @@ impl Logger {
 }
 impl Clone for Logger {
     fn clone(&self) -> Logger {
-        let alt_ip: Option<String>;
-        if self.alt_ip.is_none() {
-            alt_ip = None;
-        } else {
-            alt_ip = Option::from(self.alt_ip.as_ref().unwrap().clone())
-        }
-
-        let host: Option<String>;
-        if self.alt_ip.is_none() {
-            host = None;
-        } else {
-            host = Option::from(self.host.as_ref().unwrap().clone())
-        }
-
-        let refer: Option<String>;
-        if self.refer.is_none() {
-            refer = None;
-        } else {
-            refer = Option::from(self.refer.as_ref().unwrap().clone())
-        }
-
-        let user_agent: Option<String>;
-        if self.user_agent.is_none() {
-            user_agent = None;
-        } else {
-            user_agent = Option::from(self.user_agent.as_ref().unwrap().clone())
-        }
-
         Logger {
             ip: self.ip.clone(),
-            alt_ip,
-            host,
+            alt_ip: self.alt_ip.clone(),
+            host: self.host.clone(),
             request: self.request.clone(),
-            refer,
+            refer: self.refer.clone(),
             status_code: self.status_code.clone(),
             size: self.size.clone(),
-            user_agent,
+            user_agent: self.user_agent.clone(),
             time: self.time.clone(),
         }
     }
@@ -606,28 +449,31 @@ impl Clone for Logger {
 impl fmt::Display for Logger {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let ip = &self.ip;
-        let alt_ip: String = if self.alt_ip.is_none() {
-            "None".to_string()
+
+        let alt_ip = if let Some(ai) = self.alt_ip {
+            ai.to_string()
         } else {
-            self.alt_ip.as_ref().unwrap().to_string()
+            "None".to_string()
         };
-        let host: String = if self.host.is_none() {
-            "None".to_string()
+
+        let host = if let Some(h) = &self.host {
+            h.to_string()
         } else {
-            self.host.as_ref().unwrap().to_string()
+            "None".to_string()
         };
-        let size: String = self.size.to_string();
-        let status_code: String = self.status_code.to_string();
-        let request: String = self.request.clone();
-        let refer: String = if self.refer.is_none() {
-            "None".to_string()
+
+        let size = self.size;
+        let status_code = self.status_code;
+        let request = &self.request;
+        let refer = if let Some(r) = &self.host {
+            r.to_string()
         } else {
-            self.refer.as_ref().unwrap().to_string()
+            "None".to_string()
         };
-        let user_agent: String = if self.user_agent.is_none() {
-            "None".to_string()
+        let user_agent = if let Some(ua) = &self.user_agent {
+            ua.to_string()
         } else {
-            self.user_agent.as_ref().unwrap().to_string()
+            "None".to_string()
         };
         let time = epoch_to_datetime(self.time as i64);
 
