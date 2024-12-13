@@ -13,11 +13,12 @@ use reqwest::Client;
 use reqwest::{self, Url};
 use serde_json::{json, Value};
 use std::fs::File;
-use std::io::{Read, Write};
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::{fmt, io, thread, time};
 
+use crate::cert::Cert;
 use crate::logger::Logger;
 
 /// Checks if the string is an URL with regex
@@ -38,68 +39,8 @@ fn epoch_to_date(epoch: i64) -> NaiveDate {
     return Utc.timestamp(epoch, 0).date_naive();
 }
 
-/// Checks if the server is an elasticsearch server
-pub async fn is_es(ser: Server) -> Result<(), Error> {
-    let indexes = ["name", "cluster_name", "cluster_uuid", "version", "tagline"];
-
-    let mut buf = Vec::new();
-    File::open("/etc/elasticsearch/certs/http_ca.crt")?.read_to_end(&mut buf)?;
-    let certs = reqwest::Certificate::from_pem(&buf)?;
-
-    let url = format!("{}://{}:{}", ser.protocol, ser.hostname, ser.port);
-    is_up(url.clone()).await?;
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(16))
-        .add_root_certificate(certs)
-        .build()
-        .unwrap();
-    let response = if let (Some(u), Some(p)) = (ser.username, ser.password) {
-        client
-            .get(url.as_str())
-            .basic_auth(u, Some(p))
-            .send()
-            .await?
-    } else {
-        client.get(url.as_str()).send().await?
-    };
-    let text = response.text().await;
-    if is_json(text.as_ref().unwrap().as_str()).is_ok() == false {
-        bail!("Response is not json");
-    }
-    let res: Value = serde_json::from_str(text.unwrap().as_str()).unwrap();
-    let mut fails @ mut count = 0;
-    for index in indexes {
-        if res[index].is_null() {
-            fails += 1;
-        }
-        count += 1;
-    }
-    let success_rate = (count - fails) as f64 / count as f64;
-    if 0.75 > success_rate {
-        bail!("This does not look like an Elasticsearch DB");
-    }
-    Ok(())
-}
-
-/// Checks if host is reachable
-pub async fn is_up(str1: String) -> Result<(), Error> {
-    if is_url(str1.clone()) == false {
-        bail!("{} is not an url", str1);
-    }
-    let mut buf = Vec::new();
-    File::open("/etc/elasticsearch/certs/http_ca.crt")?.read_to_end(&mut buf)?;
-    let certs = reqwest::Certificate::from_pem(&buf)?;
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(16))
-        .add_root_certificate(certs)
-        .build()
-        .unwrap();
-    client.head(str1).send().await.unwrap();
-
-    Ok(())
-}
-
 /// Server, containing protocol, hostname, port and db
+#[derive(Clone)]
 pub struct Server {
     protocol: String,
     username: Option<String>,
@@ -108,10 +49,11 @@ pub struct Server {
     port: u16,
     index: String,
     client: Elasticsearch,
+    pub cert: Option<Cert>,
 }
 
 impl Server {
-    pub fn new(url: &str) -> Self {
+    pub fn new(url: &str, cert_path: Option<PathBuf>) -> Self {
         let re = Regex::new(r#"^(?P<protocol>[a-z]+)://(?:(?P<username>[^:@]+)?(?::(?P<password>[^@]+))?@)?(?P<host>[^:/?#]+)(?::(?P<port>\d+))?(?:/)?(?P<path>[^?#]*)?(?:\?(?P<query>[^#]*))?(?:#(?P<fragment>.*))?$"#).unwrap();
         let cap = re.captures(url).expect("Expected valid url");
 
@@ -129,8 +71,16 @@ impl Server {
         let pool = SingleNodeConnectionPool::new(
             Url::parse(&format!("{}://{}:{}", protocol, hostname, port)).unwrap(),
         );
-        let mut transport =
-            TransportBuilder::new(pool).cert_validation(CertificateValidation::None);
+
+        let mut transport = TransportBuilder::new(pool);
+        let mut cert = None;
+        if let Some(path) = cert_path {
+            if let Ok(c) = Cert::new(path) {
+                cert = Some(c.clone());
+                transport =
+                    transport.cert_validation(CertificateValidation::Certificate(c.es_cert));
+            }
+        }
 
         if let (Some(u), Some(p)) = (username.clone(), password.clone()) {
             transport = transport.auth(Credentials::Basic(u, p));
@@ -146,21 +96,26 @@ impl Server {
             port,
             index,
             client,
+            cert,
         }
     }
 
-    pub fn get_url(&self) -> String {
+    pub fn get_url_with_credentials(&self) -> String {
         if let (Some(u), Some(p)) = (&self.username, &self.password) {
             format!(
                 "{}://{}:{}@{}:{}/{}",
                 self.protocol, u, p, self.hostname, self.port, self.index
             )
         } else {
-            format!(
-                "{}://{}:{}/{}",
-                self.protocol, self.hostname, self.port, self.index
-            )
+            self.get_url()
         }
+    }
+
+    pub fn get_url(&self) -> String {
+        format!(
+            "{}://{}:{}/{}",
+            self.protocol, self.hostname, self.port, self.index
+        )
     }
     pub fn get_host(&self) -> String {
         format!("{}://{}:{}", self.protocol, self.hostname, self.port)
@@ -475,20 +430,19 @@ impl Server {
         if self.index == "" {
             bail!("No index specified");
         }
-        is_es(self.clone()).await?;
+        self.is_es().await?;
         let url = format!(
             "{}://{}:{}/{}",
             self.protocol, self.hostname, self.port, self.index
         );
 
-        let mut buf = Vec::new();
-        File::open("/etc/elasticsearch/certs/http_ca.crt")?.read_to_end(&mut buf)?;
-        let certs = reqwest::Certificate::from_pem(&buf)?;
+        let mut client_builder = Client::builder().connect_timeout(Duration::from_secs(16));
 
-        let client = Client::builder()
-            .connect_timeout(Duration::from_secs(16))
-            .add_root_certificate(certs)
-            .build()?;
+        if let Some(cp) = &self.cert {
+            client_builder = client_builder.add_root_certificate(cp.cert.clone())
+        }
+
+        let client = client_builder.build()?;
 
         let response = if let (Some(u), Some(p)) = (&self.username, &self.password) {
             client.get(url.as_str()).basic_auth(u, Some(p)).send().await
@@ -526,17 +480,54 @@ impl Server {
         Logger::valid_mapping(self.index.clone(), res).await?;
         Ok(())
     }
+
+    /// Checks if the server is an elasticsearch server
+    pub async fn is_es(&self) -> Result<(), Error> {
+        let indexes = ["name", "cluster_name", "cluster_uuid", "version", "tagline"];
+
+        let url = format!("{}://{}:{}", self.protocol, self.hostname, self.port);
+
+        let mut client_builder = Client::builder().connect_timeout(Duration::from_secs(16));
+        if let Some(cp) = &self.cert {
+            client_builder = client_builder.add_root_certificate(cp.cert.clone())
+        }
+
+        let client = client_builder.build()?;
+
+        let response = if let (Some(u), Some(p)) = (self.username.clone(), self.password.clone()) {
+            client
+                .get(url.as_str())
+                .basic_auth(u, Some(p))
+                .send()
+                .await?
+        } else {
+            client.get(url.as_str()).send().await?
+        };
+        if response.status() != 200 {
+            bail!("Returned non-200 response: {:?}", response.status())
+        }
+        let text = response.text().await;
+        if is_json(text.as_ref().unwrap().as_str()).is_ok() == false {
+            bail!("Response is not json");
+        }
+        let res: Value = serde_json::from_str(text.unwrap().as_str()).unwrap();
+        let mut fails @ mut count = 0;
+        for index in indexes {
+            if res.get(index).is_none() {
+                fails += 1;
+            }
+            count += 1;
+        }
+        let success_rate = (count - fails) as f64 / count as f64;
+        if 0.75 > success_rate {
+            bail!("This does not lookasd like an Elasticsearch DB",);
+        }
+        Ok(())
+    }
 }
 impl fmt::Display for Server {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let hostname = self.get_url();
         write!(f, "{}", hostname)
-    }
-}
-impl Clone for Server {
-    fn clone(&self) -> Server {
-        let url = self.get_url();
-        let server: Server = Server::new(url.as_str());
-        server
     }
 }

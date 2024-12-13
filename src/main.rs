@@ -3,6 +3,7 @@ use logwatcher::{LogWatcher, LogWatcherAction};
 use std::{env, sync::Arc, sync::Mutex, thread};
 
 // headers
+mod cert;
 mod config;
 mod logger;
 pub mod server;

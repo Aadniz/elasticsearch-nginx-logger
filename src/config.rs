@@ -5,7 +5,7 @@ use std::{
 
 use colored::Colorize;
 
-use crate::{logger::valid_log, server};
+use crate::{cert::Cert, logger::valid_log, server};
 use crate::{
     server::Server,
     utils::{beautify_path, valid_archive},
@@ -28,6 +28,7 @@ impl Config {
         let mut servers = DEFAULT_SERVERS.to_vec();
         let mut archiving = vec![];
         let mut archive_file_prefix = DEFAULT_ARCHIVE_FILE_PREFIX.to_string();
+        let mut cert_path: Option<PathBuf> = None;
 
         let mut new_locations: Vec<&str> = vec![];
         let mut new_servers: Vec<&str> = vec![];
@@ -39,8 +40,12 @@ impl Config {
                 // specifying a directory sets it to the archiving directory
                 new_archiving.push(arg);
             } else if Path::new(arg).exists() {
-                // specifying a file sets the file we are reading from
-                new_locations.push(arg);
+                if let Ok(_) = Cert::new(PathBuf::from(arg)) {
+                    cert_path = Some(PathBuf::from(arg));
+                } else {
+                    // specifying a file sets the file we are reading from
+                    new_locations.push(arg);
+                }
             } else if server::is_url(String::from(arg)) {
                 // specifying the url sets the elasticsearch url
                 new_servers.push(arg);
@@ -110,7 +115,7 @@ impl Config {
             .unwrap()
             .block_on(async {
                 for ser in servers {
-                    let ser = Server::new(ser);
+                    let ser = Server::new(ser, cert_path.clone());
                     print!("[ ] {} ...", ser);
                     stdout().flush().unwrap();
                     if server.is_some() {
@@ -120,6 +125,15 @@ impl Config {
                         print!("{e}");
                         print!("{}", "\r[X]\n".red());
                     } else {
+                        if ser.cert.is_some() {
+                            if let Some(cp) = cert_path
+                                .as_ref()
+                                .and_then(|p| p.to_str())
+                                .map(|s| s.to_string())
+                            {
+                                print!(" (cert: {})", cp);
+                            }
+                        }
                         print!("{}", "\r[✓]\n".green());
                         server = Some(ser.clone());
                     }
@@ -160,6 +174,7 @@ impl Config {
         }
 
         if let Some(ap) = archive_folder.as_deref().clone().and_then(|ap| ap.to_str()) {
+            println!();
             println!("Archive file prefix:");
             println!(
                 "{} {} ({}{}-YYYY-MM-DD.log.zz)",
