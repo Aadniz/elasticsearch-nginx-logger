@@ -7,11 +7,11 @@ An application to actively monitor access.log and bulk them to elasticsearch
 ![screenshot](./screenshots/Screenshot_2022-09-18_09:12:55.png "Checking process")
 
 ### Basic usage
-```bash
-$ rust-logger [access.log file(s)] [database(s)] [archive directory] [archive filename]
+```shell
+$ rust-logger [access.log file(s)] [database(s)] [archive directory] [archive filename] [certificate file]
 ```
 **Example**
-```bash
+```shell
 $ rust-logger /var/log/nginx/access.log http://127.0.0.1:9200/logger /var/log/archives archive
 ```
 It doesn't matter what order the arguments are provided. If the argument is a path to a file, it will interperate that as the log file to read. If the argument is a folder, it will become the archive directory. If the argument is an URL, it will be the database url. If it's none of these, it will become the archive prefix name.
@@ -21,6 +21,20 @@ If none are provided, rust-logger will try some default paths and servers. These
 `http://127.0.0.1:9200/logger` and `/var/log/nginx/access.log`
 
 And archive to default location `/var/log/nginx/nginx-YYYY-MM-DD.log.zz`
+
+**Auth**
+
+With the newer elasticsearch versions, it's become a standard to use TLS, and basic auth. Below is an example on how to provide the nessesary arguments for that:
+
+```shell
+$ rust-logger \
+    /var/log/nginx/access.log \
+    http://elastic:myPassword@127.0.0.1:9200/logger \
+    /var/log/archives \
+    archive \
+    /etc/elasticsearch/certs/http_ca.crt
+```
+Here both `access.log` and `http_ca.crt` are files, but are able to differentiate them based of which one is a valid certificate file or not (eg. checking for `-----BEGIN CERTIFICATE-----`)
 
 ---
 
