@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Error, Result};
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
 use colored::Colorize;
 use regex::Regex;
 use reqwest::Response;
@@ -253,7 +253,9 @@ impl Logger {
         // Getting the date
         // The format from nginx looks like this: 17/Sep/2022:23:39:19 +0200
         // It will fail if it isn't this format
-        let time = DateTime::parse_from_str(&cap[2], "%d/%b/%Y:%H:%M:%S %z")?.timestamp() as u64;
+        let time = DateTime::parse_from_str(&cap[2], "%d/%b/%Y:%H:%M:%S %z")?
+            .with_timezone(&Utc)
+            .timestamp() as u64;
 
         // Getting the domain
         let host = if &cap[3] != "-" {
@@ -389,12 +391,12 @@ impl Logger {
 
         for elm in keys.keys() {
             if keys2.contains_key(elm) == false {
-                bail!(" Should not contain: {}", elm);
+                bail!("Should not contain: {}", elm);
             }
         }
         for elm in keys2.keys() {
             if keys.contains_key(elm) == false {
-                bail!(" DB does not contain: {}", elm);
+                bail!("DB does not contain: {}", elm);
             }
         }
         Ok(())
