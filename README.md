@@ -29,7 +29,7 @@ With the newer elasticsearch versions, it's become a standard to use TLS, and ba
 ```shell
 $ rust-logger \
     /var/log/nginx/access.log \
-    http://elastic:myPassword@127.0.0.1:9200/logger \
+    https://elastic:myPassword@127.0.0.1:9200/logger \
     /var/log/archives \
     archive \
     /etc/elasticsearch/certs/http_ca.crt
