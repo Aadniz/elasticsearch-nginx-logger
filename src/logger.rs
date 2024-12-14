@@ -161,7 +161,7 @@ pub fn valid_log(loc: &str) -> bool {
     let mut fails = 0;
     for line in reader.lines() {
         if let Ok(l) = line {
-            let result = Logger::new(l);
+            let result = Logger::from_line(&l);
             if counter > 10 {
                 break;
             }
@@ -225,7 +225,7 @@ pub struct Logger {
     time: u64, // Who knows if this program lives to be 83 years old
 }
 impl Logger {
-    pub fn new(line: String) -> Result<Self, Error> {
+    pub fn from_line(line: &String) -> Result<Self, Error> {
         let re = Regex::new(r#"(.*) .* .* \[(.*)\] "(.*)" "(.*)" (\d+) (\d+) "(.*)" "(.*)""#)?;
         //if re.is_match(line.as_str()) == false {
         //    bail!("Regex did not match line");
@@ -234,7 +234,7 @@ impl Logger {
         // 127.0.0.1, 84.213.100.23 - - [20/Jul/2022:22:12:47 +0200] "example.com" "GET /index.html HTTP/1.1" 403    153    "https://google.com/q=test" "Mozilla/5.0 (X11; Linux x86_64; rv:102.0) Gecko/20100101 Firefox/102.0"
         // cap[1]                        cap[2]                       cap[3]      cap[4]                    cap[5] cap[6]  cap[7]                      cap[8]
         let cap = re
-            .captures(&line)
+            .captures(line)
             .context("Regex did not get any captures")?;
 
         // Getting ip(s)
@@ -430,21 +430,6 @@ impl Logger {
         let raw = format!("{}{}", self.time, self.ip);
         hasher.update(raw.into_bytes());
         format!("{:X}", hasher.finalize())
-    }
-}
-impl Clone for Logger {
-    fn clone(&self) -> Logger {
-        Logger {
-            ip: self.ip.clone(),
-            alt_ip: self.alt_ip.clone(),
-            host: self.host.clone(),
-            request: self.request.clone(),
-            refer: self.refer.clone(),
-            status_code: self.status_code.clone(),
-            size: self.size.clone(),
-            user_agent: self.user_agent.clone(),
-            time: self.time.clone(),
-        }
     }
 }
 

@@ -47,11 +47,11 @@ fn main() {
     let mut epoch = epoch_days_ago(ARCHIVE_TIME.into());
 
     log_watcher.watch(&mut move |line: String| {
-        let logger = match Logger::new(line.clone()) {
+        let logger = match Logger::from_line(&line) {
             Ok(l) => l,
             Err(e) => {
-                println!("{e}");
-                println!("Failed? {}", line);
+                eprintln!("{e}");
+                eprintln!("Failed? {}", line);
                 return LogWatcherAction::None;
             }
         };
