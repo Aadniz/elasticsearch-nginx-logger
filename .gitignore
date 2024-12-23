@@ -100,3 +100,4 @@ Cargo.lock
 
 .direnv/
 analytics/plots/
+*.crt
