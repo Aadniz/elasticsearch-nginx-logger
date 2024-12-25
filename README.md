@@ -8,19 +8,21 @@ An application to actively monitor access.log and bulk them to elasticsearch
 
 ### Basic usage
 ```shell
-$ rust-logger [access.log file(s)] [database(s)] [archive directory] [archive filename] [certificate file]
+$ rust-logger [access.log file(s)] [database(s)] [archive directory] [archive filename] [certificate file] [bulk size]
 ```
 **Example**
 ```shell
-$ rust-logger /var/log/nginx/access.log http://127.0.0.1:9200/logger /var/log/archives archive
+$ rust-logger /var/log/nginx/access.log http://127.0.0.1:9200/logger /var/log/archives archive 200
 ```
-It doesn't matter what order the arguments are provided. If the argument is a path to a file, it will interperate that as the log file to read. If the argument is a folder, it will become the archive directory. If the argument is an URL, it will be the database url. If it's none of these, it will become the archive prefix name.
+It doesn't matter what order the arguments are provided. If the argument is a path to a file, it will interperate that as the log file to read. If the argument is a folder, it will become the archive directory. If the argument is an URL, it will be the database url. If it's none of these, it will become the archive prefix name, lastly, if the argument is a number, it will specify the bulk size.
 
 If none are provided, rust-logger will try some default paths and servers. These are:
 
 `http://127.0.0.1:9200/logger` and `/var/log/nginx/access.log`
 
 And archive to default location `/var/log/nginx/nginx-YYYY-MM-DD.log.zz`
+
+Default bulk size is `500`, it means it needs to read 500 lines before it stores it to the elasticsearch database.
 
 **Auth**
 
@@ -32,7 +34,8 @@ $ rust-logger \
     https://elastic:myPassword@127.0.0.1:9200/logger \
     /var/log/archives \
     archive \
-    /etc/elasticsearch/certs/http_ca.crt
+    /etc/elasticsearch/certs/http_ca.crt \
+    300
 ```
 Here both `access.log` and `http_ca.crt` are files, but are able to differentiate them based of which one is a valid certificate file or not (eg. checking for `-----BEGIN CERTIFICATE-----`)
 
@@ -138,16 +141,6 @@ access_log /var/log/nginx/access.log combined_realip;
 
 ## TODO
 ### Arguments
-
-`-b` | `--bulk` [number] :
-
-Amount of requests before performing bulk request. The higher this number is, the more will be held in ram at once.
-
-The less this number is, the more individual requests are done towards the DB.
-
-Default is 2000
-
----
 
 `-c` | `--count` [number] :
 

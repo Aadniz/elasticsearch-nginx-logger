@@ -54,19 +54,18 @@ pub struct Server {
 
 impl Server {
     pub fn new(url: &str, cert_path: Option<PathBuf>) -> Self {
-        let re = Regex::new(r#"^(?P<protocol>[a-z]+)://(?:(?P<username>[^:@]+)?(?::(?P<password>[^@]+))?@)?(?P<host>[^:/?#]+)(?::(?P<port>\d+))?(?:/)?(?P<path>[^?#]*)?(?:\?(?P<query>[^#]*))?(?:#(?P<fragment>.*))?$"#).unwrap();
-        let cap = re.captures(url).expect("Expected valid url");
+        let parsed_url = Url::parse(url).expect("Expected valid url");
 
-        let protocol = cap.name("protocol").unwrap().as_str().to_string();
-        let username = cap.name("username").map(|m| m.as_str().to_string());
-        let password = cap.name("password").map(|m| m.as_str().to_string());
-        let hostname = cap.name("host").unwrap().as_str().to_string();
-        let port = cap
-            .name("port")
-            .map_or(9200, |m| m.as_str().parse().unwrap());
-        let index = cap
-            .name("path")
-            .map_or("/".to_string(), |m| m.as_str().to_string());
+        let protocol = parsed_url.scheme().to_string();
+        let username = Some(parsed_url.username().to_string());
+        let password = parsed_url.password().map(str::to_string);
+        let hostname = parsed_url.host_str().unwrap().to_string();
+        let port = parsed_url.port().unwrap_or(9200);
+        let index = parsed_url
+            .path()
+            .to_string()
+            .trim_start_matches("/")
+            .to_string();
 
         let pool = SingleNodeConnectionPool::new(
             Url::parse(&format!("{}://{}:{}", protocol, hostname, port)).unwrap(),
@@ -83,7 +82,7 @@ impl Server {
         }
 
         if let (Some(u), Some(p)) = (username.clone(), password.clone()) {
-            transport = transport.auth(Credentials::Basic(u, p));
+            transport = transport.auth(Credentials::Basic(u.to_string(), p.to_string()));
         }
 
         let client = Elasticsearch::new(transport.build().unwrap());
@@ -489,7 +488,7 @@ impl Server {
 
         let mut client_builder = Client::builder().connect_timeout(Duration::from_secs(16));
         if let Some(cp) = &self.cert {
-            client_builder = client_builder.add_root_certificate(cp.cert.clone())
+            client_builder = client_builder.add_root_certificate(cp.cert.clone());
         }
 
         let client = client_builder.build()?;

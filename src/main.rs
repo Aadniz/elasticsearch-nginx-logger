@@ -24,7 +24,6 @@ fn epoch_days_ago(days: i64) -> i64 {
 }
 
 // Default values
-const BULK_SIZE: u16 = 500;
 const ARCHIVE_TIME: u16 = 30; // Days
 
 fn main() {
@@ -60,7 +59,7 @@ fn main() {
 
         counter += 1;
 
-        if counter >= BULK_SIZE {
+        if counter >= config.bulk_size {
             // Check if new day and archiving is not happening
             let run1 = Arc::clone(&run);
             let mut running = run1.lock().unwrap();

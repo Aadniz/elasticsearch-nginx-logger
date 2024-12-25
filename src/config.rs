@@ -14,12 +14,14 @@ use crate::{
 const DEFAULT_SERVERS: [&str; 1] = ["http://127.0.0.1:9200/logger"];
 const DEFAULT_LOCATIONS: [&str; 2] = ["/var/log/nginx/access.log", "/tmp/test.log"];
 const DEFAULT_ARCHIVE_FILE_PREFIX: &str = "nginx";
+const DEFAULT_BULK_SIZE: u32 = 500;
 
 pub struct Config {
     pub nginx_sources: Vec<PathBuf>,
     pub server: Server,
     pub archive_folder: Option<PathBuf>,
     pub archive_file_prefix: String,
+    pub bulk_size: u32,
 }
 
 impl Config {
@@ -29,6 +31,7 @@ impl Config {
         let mut archiving = vec![];
         let mut archive_file_prefix = DEFAULT_ARCHIVE_FILE_PREFIX.to_string();
         let mut cert_path: Option<PathBuf> = None;
+        let mut bulk_size: u32 = DEFAULT_BULK_SIZE;
 
         let mut new_locations: Vec<&str> = vec![];
         let mut new_servers: Vec<&str> = vec![];
@@ -49,6 +52,9 @@ impl Config {
             } else if server::is_url(String::from(arg)) {
                 // specifying the url sets the elasticsearch url
                 new_servers.push(arg);
+            } else if let Ok(n) = arg.parse::<u32>() {
+                // specifying bulk size for when to insert into ES
+                bulk_size = n;
             } else {
                 archive_file_prefix = arg.to_string();
             }
@@ -98,8 +104,13 @@ impl Config {
         }
         println!();
 
+        // Bulk size
+        println!("Bulk size:");
+        println!("{} {}", "[✓]".green(), bulk_size,);
+
         // Choosing a server
         let mut server: Option<Server> = None;
+        println!();
         println!(
             "Checking Servers ({}: {}, {}: {}, {}: {}): ",
             "✓".green(),
@@ -194,6 +205,7 @@ impl Config {
             server,
             archive_folder,
             archive_file_prefix,
+            bulk_size,
         }
     }
 }
