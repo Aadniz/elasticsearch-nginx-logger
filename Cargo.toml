@@ -21,7 +21,7 @@ serde_derive = "1.0.144"
 serde_json = "1.0.85"
 sha1 = "0.10.5"
 termsize = "0.1"
-tokio = {version = "*", features = ["full"]}
+tokio = {version = "1.43", features = ["full"]}
 
 [profile.release]
 strip = true

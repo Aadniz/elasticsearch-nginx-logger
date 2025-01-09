@@ -1,6 +1,6 @@
 use chrono::{Local, NaiveTime};
 use logwatcher::{LogWatcher, LogWatcherAction};
-use std::{env, sync::Arc, sync::Mutex, thread};
+use std::{env, sync::Arc, sync::Mutex};
 
 // headers
 mod cert;
@@ -23,101 +23,93 @@ fn epoch_days_ago(days: i64) -> i64 {
     return epoch;
 }
 
-// Default values
-const ARCHIVE_TIME: u16 = 30; // Days
+/// archive time in days
+const ARCHIVE_TIME: u16 = 30;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    let config_arc = Arc::new(Mutex::new(Config::new(args)));
 
-    let config = Config::new(args);
+    let log_watchers: Vec<LogWatcher> = {
+        let config = config_arc.lock().unwrap();
+        config
+            .nginx_sources
+            .iter()
+            .filter_map(|s| LogWatcher::register(s).ok())
+            .collect()
+    };
 
-    if config.nginx_sources.len() > 1 {
-        eprintln!("No support for multiple nginx sources yet");
-        std::process::exit(1);
-    }
-
-    // And then for the actual logging
-    let mut log_watcher = LogWatcher::register(config.nginx_sources[0].clone()).unwrap();
-    let mut counter = 0;
-    let mut log: Vec<Logger> = vec![];
-    let run = Arc::new(Mutex::new(false));
-
-    // Get time epoch since midnight 30 days ago
+    let log_arc: Arc<Mutex<Vec<Logger>>> = Arc::new(Mutex::new(vec![]));
     let mut epoch = epoch_days_ago(ARCHIVE_TIME.into());
 
-    log_watcher.watch(&mut move |line: String| {
-        let logger = match Logger::from_line(&line) {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("{e}");
-                eprintln!("Failed? {}", line);
-                return LogWatcherAction::None;
-            }
-        };
+    // Create a single Tokio runtime
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        for mut lw in log_watchers {
+            let log_arc = Arc::clone(&log_arc);
+            let config_arc = Arc::clone(&config_arc);
+            lw.watch(&mut move |line: String| {
+                let log_arc = Arc::clone(&log_arc);
+                let config_arc = Arc::clone(&config_arc);
+                let logger = match Logger::from_line(&line) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        eprintln!("{e}");
+                        eprintln!("Failed? {}", line);
+                        return LogWatcherAction::None;
+                    }
+                };
 
-        log.push(logger);
-
-        counter += 1;
-
-        if counter >= config.bulk_size {
-            // Check if new day and archiving is not happening
-            let run1 = Arc::clone(&run);
-            let mut running = run1.lock().unwrap();
-            if epoch != epoch_days_ago(ARCHIVE_TIME.into()) && !*running {
-                if let Some(ap) = config.archive_folder.clone() {
-                    epoch = epoch_days_ago(ARCHIVE_TIME.into());
-                    *running = true;
-                    let mut count = 0;
-                    println!("Checking ARCHIVE_TIME");
-                    tokio::runtime::Builder::new_multi_thread()
-                        .enable_all()
-                        .build()
-                        .unwrap()
-                        .block_on(async {
-                            count = config.server.count_before(epoch).await;
+                {
+                    let mut log = log_arc.lock().unwrap();
+                    log.push(logger);
+                    let config = config_arc.lock().unwrap();
+                    let server = config.server.clone();
+                    let config = config.clone();
+                    if log.len() as u32 >= config.bulk_size {
+                        let log_clone = log.clone();
+                        tokio::task::spawn(async move {
+                            server.bulk(log_clone).await;
                         });
+                        log.clear();
 
-                    if count > 0 {
-                        println!("Documents to archive: {}", count);
-
-                        // Setting up variables to be sent to thread
-                        let run2 = Arc::clone(&run);
-                        let server = config.server.clone();
-                        let archive_file = config.archive_file_prefix.clone();
-                        thread::spawn(move || {
-                            let response = server.archive(&ap, archive_file.to_string(), epoch);
-                            if let Err(r) = response {
-                                eprintln!("WARNING: {}", r);
-                            }
-                            let mut running = run2.lock().unwrap();
-                            *running = false;
-                        });
-                    } else {
-                        println!(
-                            "Nothing to archive_path. No documents older than {} days.",
-                            ARCHIVE_TIME
-                        );
-                        *running = false;
+                        if epoch != epoch_days_ago(ARCHIVE_TIME.into()) {
+                            epoch = epoch_days_ago(ARCHIVE_TIME.into());
+                            tokio::task::spawn(async move {
+                                archive(config.clone()).await;
+                            });
+                        }
                     }
                 }
-            }
-            //else {
-            //    println!("Already running, can't do this now");
-            //}
 
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(async {
-                    // Send the bulk
-                    config.server.bulk(&log).await;
-                });
-
-            counter = 0;
-            log.clear();
+                LogWatcherAction::None
+            });
         }
-
-        LogWatcherAction::None
     });
+}
+
+async fn archive(config: Config) {
+    if let Some(ap) = config.archive_folder.clone() {
+        let epoch = epoch_days_ago(ARCHIVE_TIME.into());
+
+        println!("Checking ARCHIVE_TIME");
+        let count = config.server.count_before(epoch).await;
+
+        if count > 0 {
+            println!("Documents to archive: {}", count);
+
+            // Setting up variables to be sent to thread
+            let server = config.server.clone();
+            let archive_file = config.archive_file_prefix.clone();
+
+            let response = server.archive(&ap, archive_file.to_string(), epoch);
+            if let Err(r) = response {
+                eprintln!("WARNING: {}", r);
+            }
+        } else {
+            println!(
+                "Nothing to archive_path. No documents older than {} days.",
+                ARCHIVE_TIME
+            );
+        }
+    }
 }

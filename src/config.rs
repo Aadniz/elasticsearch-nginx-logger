@@ -12,10 +12,11 @@ use crate::{
 };
 
 const DEFAULT_SERVERS: [&str; 1] = ["http://127.0.0.1:9200/logger"];
-const DEFAULT_LOCATIONS: [&str; 2] = ["/var/log/nginx/access.log", "/tmp/test.log"];
+const DEFAULT_LOCATION: &str = "/var/log/nginx/access.log";
 const DEFAULT_ARCHIVE_FILE_PREFIX: &str = "nginx";
 const DEFAULT_BULK_SIZE: u32 = 500;
 
+#[derive(Clone)]
 pub struct Config {
     pub nginx_sources: Vec<PathBuf>,
     pub server: Server,
@@ -26,7 +27,7 @@ pub struct Config {
 
 impl Config {
     pub fn new(args: Vec<String>) -> Self {
-        let mut locations = DEFAULT_LOCATIONS.to_vec();
+        let mut locations = vec![];
         let mut servers = DEFAULT_SERVERS.to_vec();
         let mut archiving = vec![];
         let mut archive_file_prefix = DEFAULT_ARCHIVE_FILE_PREFIX.to_string();
@@ -86,12 +87,15 @@ impl Config {
             "X".red(),
             "Not found".red()
         );
+
+        if locations.is_empty() {
+            locations.push(DEFAULT_LOCATION);
+        }
+
         for loc in &locations {
             print!("[ ] {} ...", loc);
             stdout().flush().unwrap();
-            if !nginx_sources.is_empty() && Path::new(loc).exists() {
-                print!("{}", "\r[-]\n".yellow());
-            } else if valid_log(loc) {
+            if valid_log(loc) {
                 print!("{}", "\r[✓]\n".green());
                 nginx_sources.push(PathBuf::from(loc));
             } else {

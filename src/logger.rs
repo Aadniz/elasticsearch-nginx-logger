@@ -212,7 +212,7 @@ pub fn valid_log(loc: &str) -> bool {
 }
 
 /// Server, containing protocol, hostname, port and db
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Logger {
     ip: IpAddr,
     alt_ip: Option<IpAddr>,

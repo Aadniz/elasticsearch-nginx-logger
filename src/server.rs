@@ -353,7 +353,7 @@ impl Server {
         Ok(())
     }
 
-    pub async fn bulk<'a>(&self, log: &Vec<Logger>) {
+    pub async fn bulk(&self, log: Vec<Logger>) {
         let mut body: Vec<JsonBody<Value>> = vec![];
 
         let mut ids: Vec<String> = vec![];
