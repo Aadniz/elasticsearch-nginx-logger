@@ -1,6 +1,10 @@
 use chrono::{Local, NaiveTime};
 use logwatcher::{LogWatcher, LogWatcherAction};
-use std::{env, sync::Arc, sync::Mutex};
+use std::{
+    env,
+    sync::{Arc, Mutex},
+    thread,
+};
 
 // headers
 mod cert;
@@ -40,51 +44,62 @@ fn main() {
     };
 
     let log_arc: Arc<Mutex<Vec<Logger>>> = Arc::new(Mutex::new(vec![]));
-    let mut epoch = epoch_days_ago(ARCHIVE_TIME.into());
+    let epoch_arc = Arc::new(Mutex::new(epoch_days_ago(ARCHIVE_TIME.into())));
 
     // Create a single Tokio runtime
-    tokio::runtime::Runtime::new().unwrap().block_on(async {
-        for mut lw in log_watchers {
-            let log_arc = Arc::clone(&log_arc);
-            let config_arc = Arc::clone(&config_arc);
-            lw.watch(&mut move |line: String| {
-                let log_arc = Arc::clone(&log_arc);
-                let config_arc = Arc::clone(&config_arc);
-                let logger = match Logger::from_line(&line) {
-                    Ok(l) => l,
-                    Err(e) => {
-                        eprintln!("{e}");
-                        eprintln!("Failed? {}", line);
-                        return LogWatcherAction::None;
-                    }
-                };
+    let mut handles = vec![];
+    for mut lw in log_watchers {
+        let log_arc = Arc::clone(&log_arc);
+        let config_arc = Arc::clone(&config_arc);
+        let epoch_arc = Arc::clone(&epoch_arc);
+        let handle = thread::spawn(move || {
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                lw.watch(&mut move |line: String| {
+                    let log_arc = Arc::clone(&log_arc);
+                    let config_arc = Arc::clone(&config_arc);
+                    let logger = match Logger::from_line(&line) {
+                        Ok(l) => l,
+                        Err(e) => {
+                            eprintln!("{e}");
+                            eprintln!("Failed? {}", line);
+                            return LogWatcherAction::None;
+                        }
+                    };
 
-                {
-                    let mut log = log_arc.lock().unwrap();
-                    log.push(logger);
-                    let config = config_arc.lock().unwrap();
-                    let server = config.server.clone();
-                    let config = config.clone();
-                    if log.len() as u32 >= config.bulk_size {
-                        let log_clone = log.clone();
-                        tokio::task::spawn(async move {
-                            server.bulk(log_clone).await;
-                        });
-                        log.clear();
-
-                        if epoch != epoch_days_ago(ARCHIVE_TIME.into()) {
-                            epoch = epoch_days_ago(ARCHIVE_TIME.into());
+                    {
+                        let mut log = log_arc.lock().unwrap();
+                        log.push(logger);
+                        let config = config_arc.lock().unwrap();
+                        let mut epoch = epoch_arc.lock().unwrap();
+                        let server = config.server.clone();
+                        let config = config.clone();
+                        if log.len() as u32 >= config.bulk_size {
+                            let log_clone = log.clone();
                             tokio::task::spawn(async move {
-                                archive(config.clone()).await;
+                                server.bulk(log_clone).await;
                             });
+                            log.clear();
+
+                            if epoch.clone() != epoch_days_ago(ARCHIVE_TIME.into()) {
+                                *epoch = epoch_days_ago(ARCHIVE_TIME.into());
+                                tokio::task::spawn(async move {
+                                    archive(config.clone()).await;
+                                });
+                            }
                         }
                     }
-                }
 
-                LogWatcherAction::None
+                    LogWatcherAction::None
+                });
             });
-        }
-    });
+        });
+
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
 }
 
 async fn archive(config: Config) {
