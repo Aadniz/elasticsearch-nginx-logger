@@ -32,10 +32,9 @@ const ARCHIVE_TIME: u16 = 30;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let config_arc = Arc::new(Mutex::new(Config::new(args)));
+    let config = Arc::new(Config::new(args));
 
     let log_watchers: Vec<LogWatcher> = {
-        let config = config_arc.lock().unwrap();
         config
             .nginx_sources
             .iter()
@@ -50,13 +49,12 @@ fn main() {
     let mut handles = vec![];
     for mut lw in log_watchers {
         let log_arc = Arc::clone(&log_arc);
-        let config_arc = Arc::clone(&config_arc);
+        let config = config.clone();
         let epoch_arc = Arc::clone(&epoch_arc);
         let handle = thread::spawn(move || {
             tokio::runtime::Runtime::new().unwrap().block_on(async {
                 lw.watch(&mut move |line: String| {
                     let log_arc = Arc::clone(&log_arc);
-                    let config_arc = Arc::clone(&config_arc);
                     let logger = match Logger::from_line(&line) {
                         Ok(l) => l,
                         Err(e) => {
@@ -69,21 +67,23 @@ fn main() {
                     {
                         let mut log = log_arc.lock().unwrap();
                         log.push(logger);
-                        let config = config_arc.lock().unwrap();
                         let mut epoch = epoch_arc.lock().unwrap();
-                        let server = config.server.clone();
-                        let config = config.clone();
                         if log.len() as u32 >= config.bulk_size {
-                            let log_clone = log.clone();
-                            tokio::task::spawn(async move {
-                                server.bulk(log_clone).await;
-                            });
-                            log.clear();
+                            {
+                                let log_clone = log.clone();
+                                let config = config.clone();
+                                tokio::task::spawn(async move {
+                                    config.server.bulk(log_clone).await;
+                                });
+                                log.clear();
+                            }
 
+                            // Check if new day
                             if epoch.clone() != epoch_days_ago(ARCHIVE_TIME.into()) {
                                 *epoch = epoch_days_ago(ARCHIVE_TIME.into());
+                                let config = config.clone();
                                 tokio::task::spawn(async move {
-                                    archive(config.clone()).await;
+                                    archive(&config).await;
                                 });
                             }
                         }
@@ -102,7 +102,7 @@ fn main() {
     }
 }
 
-async fn archive(config: Config) {
+async fn archive(config: &Config) {
     if let Some(ap) = config.archive_folder.clone() {
         let epoch = epoch_days_ago(ARCHIVE_TIME.into());
 
