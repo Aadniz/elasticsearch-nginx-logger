@@ -207,7 +207,7 @@ impl Server {
     }
 
     /// This function archives all documents before epoch time to an archive directory
-    pub fn archive(&self, path: &Path, file_name: String, epoch: i64) -> Result<(), Error> {
+    pub fn archive(&self, path: &Path, file_name: &String, epoch: i64) -> Result<(), Error> {
         let file_name = format!("{}-{}.log.zz", file_name, epoch_to_date(epoch));
         let full_path = if let Some(p) = path.to_str() {
             format!("{}{}", p, file_name)

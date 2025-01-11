@@ -112,11 +112,9 @@ async fn archive(config: &Config) {
         if count > 0 {
             println!("Documents to archive: {}", count);
 
-            // Setting up variables to be sent to thread
-            let server = config.server.clone();
-            let archive_file = config.archive_file_prefix.clone();
-
-            let response = server.archive(&ap, archive_file.to_string(), epoch);
+            let response = config
+                .server
+                .archive(&ap, &config.archive_file_prefix, epoch);
             if let Err(r) = response {
                 eprintln!("WARNING: {}", r);
             }
