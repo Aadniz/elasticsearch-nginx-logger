@@ -4,7 +4,7 @@
 
 An application to actively monitor access.log and bulk them to elasticsearch
 
-![screenshot](./screenshots/Screenshot_2025-01-12_17:46:30.png "Running the application")
+![screenshot](./screenshots/Screenshot_2025-01-13_16:31:34.png "Running the application")
 
 ## Basic usage
 ```shell
