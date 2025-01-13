@@ -131,7 +131,7 @@ impl Server {
                             {
                                 "range": {
                                     "time": {
-                                        "lt": epoch
+                                        "lt": epoch * 1000
                                     }
                                 }
                             }
@@ -174,7 +174,7 @@ impl Server {
                             {
                                 "range": {
                                     "time": {
-                                        "lt": epoch
+                                        "lt": epoch * 1000
                                     }
                                 }
                             }
@@ -245,8 +245,8 @@ impl Server {
                                 {
                                     "range": {
                                         "time": {
-                                            "lt": epoch,
-                                            "gte": now
+                                            "lt": epoch * 1000,
+                                            "gte": now * 1000
                                         }
                                     }
                                 }
