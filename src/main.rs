@@ -4,6 +4,7 @@ use std::{
     env,
     sync::{Arc, Mutex},
     thread,
+    time::Duration,
 };
 
 // headers
@@ -43,15 +44,36 @@ fn main() {
     };
 
     let log_arc: Arc<Mutex<Vec<Logger>>> = Arc::new(Mutex::new(vec![]));
-    let epoch_arc = Arc::new(Mutex::new(epoch_days_ago(ARCHIVE_TIME.into())));
 
-    // Create a single Tokio runtime
     let mut handles = vec![];
+
+    // Archive thread
+    if config.archive_folder.is_some() {
+        let config = config.clone();
+        let handle = thread::spawn(move || {
+            // Creates Tokio runtime scope
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let mut epoch = epoch_days_ago(ARCHIVE_TIME.into());
+                loop {
+                    // Check if new day
+                    if epoch != epoch_days_ago(ARCHIVE_TIME.into()) {
+                        epoch = epoch_days_ago(ARCHIVE_TIME.into());
+                        println!("Checking archive task");
+                        archive(&config).await;
+                    }
+                    thread::sleep(Duration::from_secs(60));
+                }
+            });
+        });
+
+        handles.push(handle);
+    }
+
     for mut lw in log_watchers {
         let log_arc = Arc::clone(&log_arc);
         let config = config.clone();
-        let epoch_arc = Arc::clone(&epoch_arc);
         let handle = thread::spawn(move || {
+            // Creates Tokio runtime scope
             tokio::runtime::Runtime::new().unwrap().block_on(async {
                 lw.watch(&mut move |line: String| {
                     let log_arc = Arc::clone(&log_arc);
@@ -67,7 +89,6 @@ fn main() {
                     {
                         let mut log = log_arc.lock().unwrap();
                         log.push(logger);
-                        let mut epoch = epoch_arc.lock().unwrap();
                         if log.len() as u32 >= config.bulk_size {
                             {
                                 let log_clone = log.clone();
@@ -76,15 +97,6 @@ fn main() {
                                     config.server.bulk(log_clone).await;
                                 });
                                 log.clear();
-                            }
-
-                            // Check if new day
-                            if epoch.clone() != epoch_days_ago(ARCHIVE_TIME.into()) {
-                                *epoch = epoch_days_ago(ARCHIVE_TIME.into());
-                                let config = config.clone();
-                                tokio::task::spawn(async move {
-                                    archive(&config).await;
-                                });
                             }
                         }
                     }
@@ -106,7 +118,6 @@ async fn archive(config: &Config) {
     if let Some(ap) = config.archive_folder.clone() {
         let epoch = epoch_days_ago(ARCHIVE_TIME.into());
 
-        println!("Checking ARCHIVE_TIME");
         let count = config.server.count_before(epoch).await;
 
         if count > 0 {
@@ -114,7 +125,8 @@ async fn archive(config: &Config) {
 
             let response = config
                 .server
-                .archive(&ap, &config.archive_file_prefix, epoch);
+                .archive(&ap, &config.archive_file_prefix, epoch)
+                .await;
             if let Err(r) = response {
                 eprintln!("WARNING: {}", r);
             }

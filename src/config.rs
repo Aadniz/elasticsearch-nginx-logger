@@ -12,7 +12,6 @@ use crate::{
 };
 
 const DEFAULT_SERVERS: [&str; 1] = ["http://127.0.0.1:9200/logger"];
-const DEFAULT_LOCATION: &str = "/var/log/nginx/access.log";
 const DEFAULT_ARCHIVE_FILE_PREFIX: &str = "nginx";
 const DEFAULT_BULK_SIZE: u32 = 500;
 
@@ -88,10 +87,6 @@ impl Config {
             "Not found".red()
         );
 
-        if locations.is_empty() {
-            locations.push(DEFAULT_LOCATION);
-        }
-
         for loc in &locations {
             print!("[ ] {} ...", loc);
             stdout().flush().unwrap();
@@ -103,8 +98,7 @@ impl Config {
             }
         }
         if nginx_sources.is_empty() {
-            println!("{}", "No log file found to log data from".red());
-            std::process::exit(1);
+            eprintln!("{}", "No log file found to log data from");
         }
         println!();
 
@@ -159,7 +153,7 @@ impl Config {
         let server: Server = if let Some(s) = server {
             s
         } else {
-            println!("{}", "No server found to log data to".red());
+            println!("{}", "No Elasticsearch server specified".red());
             std::process::exit(1);
         };
 
@@ -203,6 +197,13 @@ impl Config {
             println!("{}", "No archiving will be done".yellow());
         }
         println!();
+
+        if nginx_sources.is_empty() && archive_folder.is_none() {
+            eprintln!(
+                "The application serves no purpose without any nginx logs and no archive location"
+            );
+            std::process::exit(1);
+        }
 
         Self {
             nginx_sources,

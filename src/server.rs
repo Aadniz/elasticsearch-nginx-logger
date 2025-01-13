@@ -207,7 +207,7 @@ impl Server {
     }
 
     /// This function archives all documents before epoch time to an archive directory
-    pub fn archive(&self, path: &Path, file_name: &String, epoch: i64) -> Result<(), Error> {
+    pub async fn archive(&self, path: &Path, file_name: &String, epoch: i64) -> Result<(), Error> {
         let file_name = format!("{}-{}.log.zz", file_name, epoch_to_date(epoch));
         let full_path = if let Some(p) = path.to_str() {
             format!("{}{}", p, file_name)
@@ -215,140 +215,134 @@ impl Server {
             bail!("Failed to convert path: `{:?}` to a string", path)
         };
 
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                // Get the count of amount of documents to archive
-                let total = self.count_before(epoch).await;
-                let mut now: u64 = 0;
-                let mut prev_now: u64 = 0;
-                let mut last500: Vec<String> = vec![];
-                // Just in case
-                if 0 >= total {
-                    return;
-                }
+        // Get the count of amount of documents to archive
+        let total = self.count_before(epoch).await;
+        let mut now: u64 = 0;
+        let mut prev_now: u64 = 0;
+        let mut last500: Vec<String> = vec![];
+        // Just in case
+        if 0 >= total {
+            bail!("There is {} documents to archive", total);
+        }
 
-                let mut e = ZlibEncoder::new(Vec::new(), Compression::best());
-                print!("Running");
+        let mut e = ZlibEncoder::new(Vec::new(), Compression::best());
+        print!("Running");
 
-                // The main loop
-                loop {
-                    print!(".");
-                    // if on the last few documents to archive
-                    let mut last_run = false;
-                    let search_response = self
-                        .client
-                        .search(SearchParts::Index(&[self.index.as_str()]))
-                        .body(json!({
-                            "from": 0,
-                            "size": 500,
-                            "query": {
-                                "bool": {
-                                    "must": [
-                                        {
-                                            "range": {
-                                                "time": {
-                                                    "lt": epoch,
-                                                    "gte": now
-                                                }
-                                            }
+        // The main loop
+        loop {
+            print!(".");
+            // if on the last few documents to archive
+            let mut last_run = false;
+            let search_response = self
+                .client
+                .search(SearchParts::Index(&[self.index.as_str()]))
+                .body(json!({
+                    "from": 0,
+                    "size": 500,
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {
+                                    "range": {
+                                        "time": {
+                                            "lt": epoch,
+                                            "gte": now
                                         }
-                                    ]
+                                    }
                                 }
-                            },
-                            "sort": {
-                                "time": {
-                                    "order": "ASC"
-                                }
-                            }
-                        }))
-                        .send()
-                        .await;
-
-                    if !search_response.is_ok() {
-                        println!("{}", "Failed to search archive".red());
-                        thread::sleep(time::Duration::from_secs(6));
-                        continue;
-                    }
-
-                    let response = search_response.unwrap().json::<Value>().await;
-
-                    if !response.is_ok() {
-                        println!(
-                            "{}",
-                            "Archive search responded with a non-zero response!".red()
-                        );
-                        thread::sleep(time::Duration::from_secs(6));
-                        continue;
-                    }
-
-                    let response_body = response.unwrap();
-
-                    let failed = response_body.get("error");
-                    if !failed.is_none() {
-                        println!("{}", "Archiving search had errors!".red());
-                        println!("{:?}", response_body);
-                        thread::sleep(time::Duration::from_secs(6));
-                        continue;
-                    }
-
-                    let items = response_body["hits"]["hits"].as_array().unwrap();
-                    if 500 > items.len() {
-                        println!("Finishing off archiving last {} documents", items.len());
-                        last_run = true;
-                    }
-
-                    // Loop through response
-                    let mut last: Vec<String> = vec![];
-                    for item in items {
-                        if item.get("_source").is_none() {
-                            println!("Dcument doesn't have _source ?");
-                            continue;
+                            ]
                         }
-                        if item.get("_id").is_none() {
-                            println!("Dcument doesn't have _id ?");
-                            continue;
+                    },
+                    "sort": {
+                        "time": {
+                            "order": "ASC"
                         }
-                        if item["_source"].get("time").is_none() {
-                            println!("Dcument doesn't have time ?");
-                            continue;
-                        }
-                        now = item["_source"]["time"].as_u64().unwrap_or(0);
-                        let id = String::from(item["_id"].as_str().unwrap_or("0"));
-                        last.push(id.clone());
-                        if last500.contains(&id) {
-                            continue;
-                        }
-
-                        // Actually writing the line
-                        let log = Logger::from_es(&item["_source"]).unwrap();
-                        let line = format!("{}\n", log);
-                        e.write_all(line.as_bytes()).unwrap();
                     }
-                    last500 = last;
+                }))
+                .send()
+                .await;
 
-                    if last_run {
-                        let compressed_bytes = e.finish();
+            if !search_response.is_ok() {
+                println!("{}", "Failed to search archive".red());
+                thread::sleep(time::Duration::from_secs(6));
+                continue;
+            }
 
-                        let mut output = File::create(full_path.clone()).unwrap();
-                        output.write_all(&compressed_bytes.unwrap()).unwrap();
+            let response = search_response.unwrap().json::<Value>().await;
 
-                        println!("Saved archive: {}", full_path);
-                        println!("Deleting {} documents...", total);
-                        self.delete_before(epoch).await;
-                        break;
-                    }
+            if !response.is_ok() {
+                println!(
+                    "{}",
+                    "Archive search responded with a non-zero response!".red()
+                );
+                thread::sleep(time::Duration::from_secs(6));
+                continue;
+            }
 
-                    // In case it loops through 500 documents, all with the same timestamp
-                    if now == prev_now {
-                        print!("+");
-                        now += 1;
-                    }
-                    prev_now = now;
+            let response_body = response.unwrap();
+
+            let failed = response_body.get("error");
+            if !failed.is_none() {
+                println!("{}", "Archiving search had errors!".red());
+                println!("{:?}", response_body);
+                thread::sleep(time::Duration::from_secs(6));
+                continue;
+            }
+
+            let items = response_body["hits"]["hits"].as_array().unwrap();
+            if 500 > items.len() {
+                println!("Finishing off archiving last {} documents", items.len());
+                last_run = true;
+            }
+
+            // Loop through response
+            let mut last: Vec<String> = vec![];
+            for item in items {
+                if item.get("_source").is_none() {
+                    println!("Dcument doesn't have _source ?");
+                    continue;
                 }
-            });
+                if item.get("_id").is_none() {
+                    println!("Dcument doesn't have _id ?");
+                    continue;
+                }
+                if item["_source"].get("time").is_none() {
+                    println!("Dcument doesn't have time ?");
+                    continue;
+                }
+                now = item["_source"]["time"].as_u64().unwrap_or(0);
+                let id = String::from(item["_id"].as_str().unwrap_or("0"));
+                last.push(id.clone());
+                if last500.contains(&id) {
+                    continue;
+                }
+
+                // Actually writing the line
+                let log = Logger::from_es(&item["_source"]).unwrap();
+                let line = format!("{}\n", log);
+                e.write_all(line.as_bytes()).unwrap();
+            }
+            last500 = last;
+
+            if last_run {
+                let compressed_bytes = e.finish();
+
+                let mut output = File::create(full_path.clone()).unwrap();
+                output.write_all(&compressed_bytes.unwrap()).unwrap();
+
+                println!("Saved archive: {}", full_path);
+                println!("Deleting {} documents...", total);
+                self.delete_before(epoch).await;
+                break;
+            }
+
+            // In case it loops through 500 documents, all with the same timestamp
+            if now == prev_now {
+                print!("+");
+                now += 1;
+            }
+            prev_now = now;
+        }
 
         Ok(())
     }
