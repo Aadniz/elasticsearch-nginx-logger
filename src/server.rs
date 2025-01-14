@@ -1,5 +1,5 @@
 use anyhow::{bail, Error, Result};
-use chrono::{NaiveDate, TimeZone, Utc};
+use chrono::{Duration, Utc};
 use colored::Colorize;
 use elasticsearch::auth::Credentials;
 use elasticsearch::cert::CertificateValidation;
@@ -15,7 +15,6 @@ use serde_json::{json, Value};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 use std::{fmt, io, thread, time};
 
 use crate::cert::Cert;
@@ -33,10 +32,6 @@ pub fn is_url(str1: String) -> bool {
 pub fn is_json(str: &str) -> Result<()> {
     let _res: Value = serde_json::from_str(str)?;
     Ok(())
-}
-
-fn epoch_to_date(epoch: i64) -> NaiveDate {
-    return Utc.timestamp(epoch, 0).date_naive();
 }
 
 /// Server, containing protocol, hostname, port and db
@@ -120,7 +115,7 @@ impl Server {
         format!("{}://{}:{}", self.protocol, self.hostname, self.port)
     }
 
-    pub async fn count_before(&self, epoch: i64) -> i64 {
+    pub async fn count_before(&self, days_ago: u16) -> i64 {
         let search_response = self
             .client
             .count(CountParts::Index(&[self.index.as_str()]))
@@ -131,7 +126,7 @@ impl Server {
                             {
                                 "range": {
                                     "time": {
-                                        "lt": epoch * 1000
+                                        "lt": format!("now-{}d/d", days_ago)
                                     }
                                 }
                             }
@@ -163,7 +158,7 @@ impl Server {
         return response_body.get("count").unwrap().as_i64().unwrap();
     }
 
-    async fn delete_before(&self, epoch: i64) {
+    async fn delete_before(&self, days_ago: u16) {
         let delete_query = self
             .client
             .delete_by_query(DeleteByQueryParts::Index(&[self.index.as_str()]))
@@ -174,7 +169,7 @@ impl Server {
                             {
                                 "range": {
                                     "time": {
-                                        "lt": epoch * 1000
+                                        "lt": format!("now-{}d/d", days_ago)
                                     }
                                 }
                             }
@@ -207,8 +202,17 @@ impl Server {
     }
 
     /// This function archives all documents before epoch time to an archive directory
-    pub async fn archive(&self, path: &Path, file_name: &String, epoch: i64) -> Result<(), Error> {
-        let file_name = format!("{}-{}.log.zz", file_name, epoch_to_date(epoch));
+    pub async fn archive(
+        &self,
+        path: &Path,
+        file_name: &String,
+        days_ago: u16,
+    ) -> Result<(), Error> {
+        let file_name = format!(
+            "{}-{}.log.zz",
+            file_name,
+            Utc::now().naive_utc().date() - Duration::days(days_ago.into())
+        );
         let full_path = if let Some(p) = path.to_str() {
             format!("{}{}", p, file_name)
         } else {
@@ -216,7 +220,7 @@ impl Server {
         };
 
         // Get the count of amount of documents to archive
-        let total = self.count_before(epoch).await;
+        let total = self.count_before(days_ago).await;
         let mut now: u64 = 0;
         let mut prev_now: u64 = 0;
         let mut last500: Vec<String> = vec![];
@@ -245,7 +249,7 @@ impl Server {
                                 {
                                     "range": {
                                         "time": {
-                                            "lt": epoch * 1000,
+                                            "lt": format!("now-{}d/d", days_ago),
                                             "gte": now * 1000
                                         }
                                     }
@@ -332,7 +336,7 @@ impl Server {
 
                 println!("Saved archive: {}", full_path);
                 println!("Deleting {} documents...", total);
-                self.delete_before(epoch).await;
+                self.delete_before(days_ago).await;
                 break;
             }
 
@@ -369,7 +373,7 @@ impl Server {
             .client
             .bulk(BulkParts::Index(self.index.as_str()))
             .body(body)
-            .request_timeout(Duration::from_secs(25))
+            .request_timeout(time::Duration::from_secs(25))
             .send()
             .await;
 
@@ -429,7 +433,7 @@ impl Server {
             self.protocol, self.hostname, self.port, self.index
         );
 
-        let mut client_builder = Client::builder().connect_timeout(Duration::from_secs(16));
+        let mut client_builder = Client::builder().connect_timeout(time::Duration::from_secs(16));
 
         if let Some(cp) = &self.cert {
             client_builder = client_builder.add_root_certificate(cp.cert.clone())
@@ -480,7 +484,7 @@ impl Server {
 
         let url = format!("{}://{}:{}", self.protocol, self.hostname, self.port);
 
-        let mut client_builder = Client::builder().connect_timeout(Duration::from_secs(16));
+        let mut client_builder = Client::builder().connect_timeout(time::Duration::from_secs(16));
         if let Some(cp) = &self.cert {
             client_builder = client_builder.add_root_certificate(cp.cert.clone());
         }

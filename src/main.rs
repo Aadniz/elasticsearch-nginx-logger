@@ -29,7 +29,7 @@ fn epoch_days_ago(days: i64) -> i64 {
 }
 
 /// archive time in days
-const ARCHIVE_TIME: u16 = 30;
+const ARCHIVE_AFTER_DAYS: u16 = 30;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -53,11 +53,11 @@ fn main() {
         let handle = thread::spawn(move || {
             // Creates Tokio runtime scope
             tokio::runtime::Runtime::new().unwrap().block_on(async {
-                let mut epoch = epoch_days_ago(ARCHIVE_TIME.into());
+                let mut epoch = epoch_days_ago(ARCHIVE_AFTER_DAYS.into());
                 loop {
                     // Check if new day
-                    if epoch != epoch_days_ago(ARCHIVE_TIME.into()) {
-                        epoch = epoch_days_ago(ARCHIVE_TIME.into());
+                    if epoch != epoch_days_ago(ARCHIVE_AFTER_DAYS.into()) {
+                        epoch = epoch_days_ago(ARCHIVE_AFTER_DAYS.into());
                         println!("Checking archive task");
                         archive(&config).await;
                     }
@@ -116,16 +116,14 @@ fn main() {
 
 async fn archive(config: &Config) {
     if let Some(ap) = config.archive_folder.clone() {
-        let epoch = epoch_days_ago(ARCHIVE_TIME.into());
-
-        let count = config.server.count_before(epoch).await;
+        let count = config.server.count_before(ARCHIVE_AFTER_DAYS).await;
 
         if count > 0 {
             println!("Documents to archive: {}", count);
 
             let response = config
                 .server
-                .archive(&ap, &config.archive_file_prefix, epoch)
+                .archive(&ap, &config.archive_file_prefix, ARCHIVE_AFTER_DAYS)
                 .await;
             if let Err(r) = response {
                 eprintln!("WARNING: {}", r);
@@ -133,7 +131,7 @@ async fn archive(config: &Config) {
         } else {
             println!(
                 "Nothing to archive_path. No documents older than {} days.",
-                ARCHIVE_TIME
+                ARCHIVE_AFTER_DAYS
             );
         }
     }
