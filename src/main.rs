@@ -130,7 +130,7 @@ async fn archive(config: &Config) {
             }
         } else {
             println!(
-                "Nothing to archive_path. No documents older than {} days.",
+                "Nothing to archive. No documents older than {} days.",
                 ARCHIVE_AFTER_DAYS
             );
         }
