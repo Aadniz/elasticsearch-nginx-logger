@@ -211,7 +211,7 @@ impl Server {
         let file_name = format!(
             "{}-{}.log.zz",
             file_name,
-            Utc::now().naive_utc().date() - Duration::days(days_ago.into())
+            Utc::now().naive_utc().date() - Duration::days((days_ago + 1).into())
         );
         let full_path = if let Some(p) = path.to_str() {
             format!("{}{}", p, file_name)
